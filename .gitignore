@@ -1,0 +1,26 @@
+# 依赖
+node_modules/
+package-lock.json
+
+# 凭据：任何形态的密钥都不许入库
+.env
+.env.*
+*.env
+*.token
+*.pem
+*.key
+secrets.json
+
+# 运行时产物（插件跑起来才会生成）
+spill/
+worklogs/
+state.json
+state.json.*
+*.tmp
+*.log
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,15 @@
+{
+  "name": "lifecycle-cache-cleaner",
+  "version": "0.1.0",
+  "description": "Local-agent KV cache lifecycle manager: overflow guard + worklog solidification + handle destroy/rebuild.",
+  "type": "module",
+  "main": "cleaner.js",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "test": "node --test",
+    "test:v2": "node --test test/rss-release.test.js"
+  },
+  "license": "MIT"
+}
