@@ -13,10 +13,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { LeaseRegistry } from '../../whalebone-core/engine-lease.js';
-import { WorkspaceRegistry } from '../../whalebone-core/workspace-registry.js';
-import { WorkspaceMemoryStore } from '../../whalebone-core/workspace-memory.js';
-import { findOrphanWorkspaces } from '../../whalebone-core/orphan-scan.js';
+import { LeaseRegistry } from '../lib/core/engine-lease.js';
+import { WorkspaceRegistry } from '../lib/core/workspace-registry.js';
+import { WorkspaceMemoryStore } from '../lib/core/workspace-memory.js';
+import { findOrphanWorkspaces } from '../lib/core/orphan-scan.js';
 import { SessionDeleter } from '../session-deleter.js';
 
 const DAY = 86_400_000;

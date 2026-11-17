@@ -1,15 +1,37 @@
 {
   "name": "dsh-whalebone",
   "version": "0.1.0",
+  "description": "DSH 桌面端：删除会话时释放本地推理引擎显存，并对工作区记忆做孤儿标记与可撤销归档",
   "type": "module",
   "main": "session-deleter.js",
-  "engines": { "node": ">=18.17" },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "files": [
+    "session-deleter.js",
+    "lib/",
+    "adapters/",
+    "docs/"
+  ],
   "scripts": {
     "test": "node --test",
     "test:v7": "node --test test/v7-probe-ownership.test.js",
     "test:v8": "node --test test/v8-real-release.test.js",
     "test:v9": "node --test test/v9-probe-failure.test.js",
-    "test:v10": "node --test test/v10-concurrency.test.js"
+    "test:v10": "node --test test/v10-concurrency.test.js",
+    "test:v11": "node --test test/v11-workspace-orphan.test.js"
   },
-  "private": true
+  "keywords": [
+    "dsh",
+    "ollama",
+    "llama.cpp",
+    "vram",
+    "kv-cache"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ccr-wer/dsh-Lifecycle-Cache-Cleaner.git",
+    "directory": "dsh-whalebone"
+  },
+  "license": "UNLICENSED"
 }

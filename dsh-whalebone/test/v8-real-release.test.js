@@ -9,9 +9,9 @@ import {
   makeSampler,
   cleanAndVerify,
   SAMPLER_KIND,
-} from '../../whalebone-core/vram-cleaner.js';
-import { LeaseRegistry } from '../../whalebone-core/engine-lease.js';
-import { EngineProbe } from '../../whalebone-core/engine-probe.js';
+} from '../lib/core/vram-cleaner.js';
+import { LeaseRegistry } from '../lib/core/engine-lease.js';
+import { EngineProbe } from '../lib/core/engine-probe.js';
 import { SessionDeleter, DELETE_STATE } from '../session-deleter.js';
 import { createLlamaCppAdapter } from '../adapters/llamacpp.js';
 import { fakeTransport, seqSampler, sleep } from './helpers/fakes.js';

@@ -82,7 +82,7 @@ deleter.registerSession(sessionId, {
 历史会话没有 `engine_ref`。方案是**只标记、不回填**：
 
 ```js
-import { planLegacyMigration } from '../whalebone-core/engine-lease.js';
+import { planLegacyMigration } from 'dsh-whalebone/lib/core/engine-lease.js';
 
 const plan = planLegacyMigration(sessions);
 // [

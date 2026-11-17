@@ -2,12 +2,16 @@
 
 DSH 桌面端「删除会话时释放本地模型显存」的增量实现。
 
-- `whalebone-core/` —— 宿主无关内核（禁止 `require('dsh')`、禁止直接 `fetch`）
-- `dsh-whalebone/` —— 删除编排 + 引擎适配器 + V7–V10 测试
+- `session-deleter.js` —— 删除编排（`DELETE_STATE` 九态）
+- `lib/core/` —— 宿主无关内核（禁止 `require('dsh')`、禁止直接 `fetch`）
+- `adapters/` —— ollama / llama.cpp / dsh 适配器
+- `test/` —— V7–V11
+
+单包结构：`lib/core/` 是包内目录，不是独立 npm 包，因此不存在跨包引用。
 
 ```bash
-cd dsh-whalebone && node --test        # V7–V10
-cd ../lifecycle-cache-cleaner && node --test   # V1–V6（既有，未改动）
+cd dsh-whalebone && npm test                    # V7–V11
+cd .. && node --test                            # 仓库根：V1–V6（既有，未改动）
 ```
 
 ## 一句话立场
@@ -65,7 +69,7 @@ Apple Silicon 是统一内存，没有独立的"显存"。`footprint` 只能看�
 
 ## 归属判定的三要素
 
-`whalebone-core/ownership.js` 是纯函数，也是唯一安全阀。三要素**同时**命中才算 `owned`：
+`lib/core/ownership.js` 是纯函数，也是唯一安全阀。三要素**同时**命中才算 `owned`：
 
 | # | 要素 | 缺失/矛盾时的结论 |
 |---|---|---|

@@ -10,9 +10,9 @@
  *  - 处于 tearing_down/rebuilding 时直接 skipped_busy，不排队。
  *  - 同一会话并发删除幂等。
  */
-import { decide, VERDICT } from '../whalebone-core/ownership.js';
-import { cleanAndVerify, CLEAN_LEVELS, CLEAN_STATUS } from '../whalebone-core/vram-cleaner.js';
-import { findOrphanWorkspaces } from '../whalebone-core/orphan-scan.js';
+import { decide, VERDICT } from './lib/core/ownership.js';
+import { cleanAndVerify, CLEAN_LEVELS, CLEAN_STATUS } from './lib/core/vram-cleaner.js';
+import { findOrphanWorkspaces } from './lib/core/orphan-scan.js';
 
 export const DELETE_STATE = Object.freeze({
   IDLE: 'idle',
@@ -28,8 +28,8 @@ export const DELETE_STATE = Object.freeze({
 export class SessionDeleter {
   /**
    * @param {object} args
-   * @param {import('../whalebone-core/engine-lease.js').LeaseRegistry} args.leases
-   * @param {import('../whalebone-core/engine-probe.js').EngineProbe} args.probe
+   * @param {import('./lib/core/engine-lease.js').LeaseRegistry} args.leases
+   * @param {import('./lib/core/engine-probe.js').EngineProbe} args.probe
    * @param {object[]} [args.adapters]  引擎适配器列表
    * @param {object} [args.transport]   只读/写都走它；core 不直接 fetch
    * @param {{deleteSession:Function}} args.host
