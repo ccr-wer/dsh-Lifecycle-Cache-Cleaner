@@ -1,17 +1,16 @@
-# dsh-whalebone
+# 引擎释放（whalebone 模块）
 
 DSH 桌面端「删除会话时释放本地模型显存」的增量实现。
 
 - `session-deleter.js` —— 删除编排（`DELETE_STATE` 九态）
 - `lib/core/` —— 宿主无关内核（禁止 `require('dsh')`、禁止直接 `fetch`）
-- `adapters/` —— ollama / llama.cpp / dsh 适配器
+- `adapters/engine/` —— ollama / llama.cpp / dsh 引擎适配器
 - `test/` —— V7–V11
 
 单包结构：`lib/core/` 是包内目录，不是独立 npm 包，因此不存在跨包引用。
 
 ```bash
-cd dsh-whalebone && npm test                    # V7–V11
-cd .. && node --test                            # 仓库根：V1–V6（既有，未改动）
+node --test                                     # 全部：V1–V11 + S/I 系列
 ```
 
 ## 一句话立场

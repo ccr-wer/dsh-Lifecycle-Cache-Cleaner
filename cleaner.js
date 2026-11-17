@@ -12,6 +12,7 @@ import { PHASES, StateStore, recoveryAction } from './state.js';
 import { OverflowGuard, defaultCountTokens } from './overflow-guard.js';
 import { appendRawTrace, readRawTraceTail, extractTraceSection } from './raw-trace.js';
 import * as wl from './worklog.js';
+import { probeAdapter, evaluateGate } from './lib/core/release-gate.js';
 
 export const DEFAULTS = Object.freeze({
   // 计划性重建触发（不是安全阀）
@@ -27,6 +28,7 @@ export const DEFAULTS = Object.freeze({
   entityJaccardMin: 0.6,
   entryJaccardMin: 0.5,
   nCtx: 8192,
+  probeTimeoutMs: 300,
   level: 'ctx', // 'ctx' | 'engine' | 'process'
 });
 
@@ -98,6 +100,14 @@ export class LifecycleCacheCleaner {
     this.turn = 0;
     this.modelId = null;
     this._busy = false;
+
+    // 能力探测：DSH 原生压缩在场时，重建归宿主，我们不再自算水位。
+    // 拿不准一律 false（回退到自己触发），绝不假设宿主支持。
+    this.caps = {
+      compaction: Boolean(adapter?.capabilities?.compaction),
+      tokenMeter: Boolean(adapter?.capabilities?.tokenMeter),
+    };
+    this.mode = this.caps.compaction ? 'compaction-driven' : 'self-triggered';
   }
 
   get phase() {
@@ -119,16 +129,29 @@ export class LifecycleCacheCleaner {
     appendRawTrace({ logPath: this.worklogPath, turn: this.turn, userText, tools });
 
     const modelId = await this.adapter.currentModelId?.();
-    if (this.modelId && modelId && modelId !== this.modelId) {
-      this.modelId = modelId;
-      return this.rebuild({ reason: 'model-switch' });
-    }
+    const switched = Boolean(this.modelId && modelId && modelId !== this.modelId);
     if (modelId) this.modelId = modelId;
 
+    if (switched && !this.caps.compaction) {
+      return this.rebuild({ reason: 'model-switch' });
+    }
+
     const ratio = await this.adapter.usageRatio();
-    const due =
-      ratio >= this.cfg.rebuildWatermark &&
-      this.turn % Math.max(1, this.cfg.rebuildPeriodTurns) === 0;
+
+    // DSH 原生压缩模式：压缩由宿主发起（pressure / context-overflow），
+    // 我们只在 compaction/end 回到 onCompacted()。这里绝不自建重建，避免双重压缩。
+    if (this.caps.compaction) {
+      return {
+        ok: true,
+        rebuilt: false,
+        ratio,
+        turn: this.turn,
+        mode: this.mode,
+        modelSwitched: switched,
+      };
+    }
+
+    const due = ratio >= this.cfg.rebuildWatermark && this.turn % Math.max(1, this.cfg.rebuildPeriodTurns) === 0;
     if (due) return this.rebuild({ reason: 'watermark' });
 
     return { ok: true, rebuilt: false, ratio, turn: this.turn };
@@ -163,76 +186,22 @@ export class LifecycleCacheCleaner {
     }
     st.transition(PHASES.SUMMARIZING, { reason });
 
-    const prevMd = safeRead(this.worklogPath);
-    const prev = prevMd ? wl.parseWorklog(prevMd) : { goal: '', entries: [], negations: [] };
-    const traceTail = readRawTraceTail({ logPath: this.worklogPath, maxTurns: this.cfg.keepLastTurns });
-
-    let raw;
-    try {
-      raw = await this.adapter.summarize(buildPrompt(prevMd, traceTail), {
-        maxTokens: this.cfg.maxSummaryTokens,
-      });
-    } catch (err) {
-      return this.#rollback(`summarize_failed:${err.message}`);
+    const built = await this.#writeWorklog();
+    if (!built.ok) {
+      await this.#rollback(built.rollbackMsg);
+      return built.final || { ok: false, stage: 'rollback', error: built.rollbackMsg };
     }
-
-    // V1：总结超长/为空 -> 不清理
-    const tokens = defaultCountTokens(raw || '');
-    if (!raw || tokens > this.cfg.maxSummaryTokens) {
-      await this.#rollback(`summary_too_long:${tokens}`);
-      return { ok: false, stage: 'summary-size', tokens };
-    }
-
-    let modelEntries;
-    try {
-      modelEntries = wl.parseModelEntries(raw);
-    } catch (err) {
-      await this.#rollback(`summary_unparseable:${err.message}`);
-      return { ok: false, stage: 'parse', error: err.message };
-    }
-
-    const assigned = wl.assignIds(modelEntries, prev.entries);
-    const negations = wl.mergeNegations(prev.negations, prev.entries, assigned);
-    const trace = prevMd ? extractTraceSection(prevMd) : '';
-
-    const doc = wl.renderWorklog({
-      sessionId: this.sessionId,
-      goal: prev.goal || '(未声明)',
-      entries: assigned,
-      negations,
-      rawTrace: trace,
-    });
-
-    const verdict = wl.validateWorklog({
-      prev,
-      next: wl.parseWorklog(doc),
-      limits: {
-        droppedRatioLimit: this.cfg.droppedRatioLimit,
-        entityJaccardMin: this.cfg.entityJaccardMin,
-        entryJaccardMin: this.cfg.entryJaccardMin,
-      },
-    });
-    if (!verdict.ok) {
-      await this.#rollback(`l5:${verdict.reasons.join('|')}`);
-      return { ok: false, stage: 'l5', reasons: verdict.reasons };
-    }
-
-    // L6 原子提交
-    fs.mkdirSync(path.dirname(this.worklogPath), { recursive: true });
-    const tmpPath = `${this.worklogPath}.tmp`;
-    fs.writeFileSync(tmpPath, doc, 'utf8');
-    try {
-      wl.commitAtomic({ tmpPath, finalPath: this.worklogPath, backupPath: this.backupPath });
-    } catch (err) {
-      try {
-        fs.unlinkSync(tmpPath);
-      } catch {
-        /* ignore */
-      }
-      return this.#rollback(`commit_failed:${err.message}`);
-    }
+    const { doc, traceTail } = built;
 
     st.transition(PHASES.VALIDATED);
+
+    // 统一闸门：探测不到部署就不动引擎（日志已提交，不走销毁）
+    const gate = await this.#gateRelease();
+    if (!gate.proceed) {
+      await this.#rollback(`gate:${gate.code}`);
+      return { ok: false, stage: 'gate', code: gate.code, probeState: gate.probeState };
+    }
+
     st.transition(PHASES.TEARING_DOWN, { committed_log_path: this.worklogPath });
 
     // 物理清理：只有销毁重建，没有"清缓存"
@@ -273,6 +242,197 @@ export class LifecycleCacheCleaner {
 
     st.transition(PHASES.COMMITTED);
     return { ok: true, rebuilt: true, phase: PHASES.COMMITTED, logPath: this.worklogPath };
+  }
+
+  /* ---------------------------------------------------- 压缩驱动（宿主原生） */
+
+  /**
+   * 宿主 compaction/end 回调（失败带 error）。
+   *
+   * 两个动作严格分开：
+   *   - 记忆整理（固化工作日志）：失败就不释放显存（沿用 V1「没有有效日志就不清理」）
+   *   - 缓存释放：失败不回滚已提交的日志，也不抛给宿主
+   */
+  async onCompacted({ error = null, droppedTokens = 0 } = {}) {
+    if (!this.caps.compaction) {
+      return { ok: false, skipped: 'compaction_unavailable' };
+    }
+    if (error) {
+      return { ok: false, skipped: 'compaction_failed', error: String(error).slice(0, 500) };
+    }
+    if (await this.#compactionOpen()) {
+      return { ok: false, skipped: 'compaction_open' };
+    }
+
+    const memory = await this.#solidifyOnly('compaction');
+    if (!memory.ok) {
+      // 日志整理没完成，压缩就不算完成：既不报完成，也不碰引擎。
+      return {
+        ok: false,
+        compactionComplete: false,
+        droppedTokens,
+        memory,
+        cache: { ok: false, skipped: 'memory_failed' },
+      };
+    }
+
+    // 到这里日志已落盘，压缩才成立；缓存释放是后续动作，失败不影响“压缩完成”。
+    const cache = await this.releaseCache({ reason: 'compaction' });
+    return { ok: true, compactionComplete: true, droppedTokens, memory, cache };
+  }
+
+  /** 只释放引擎，不写日志、不动状态机。失败不外抛。 */
+  async releaseCache({ reason = 'manual' } = {}) {
+    if (this._busy) return { ok: false, skipped: 'busy' };
+    this._busy = true;
+    try {
+      const gate = await this.#gateRelease();
+      if (!gate.proceed) {
+        return { ok: false, skipped: gate.code, cause: gate.cause ?? null, probeState: gate.probeState, reason };
+      }
+
+      const md = safeRead(this.worklogPath);
+      const traceTail = readRawTraceTail({ logPath: this.worklogPath, maxTurns: this.cfg.keepLastTurns });
+      const systemPrompt = buildSystemPrompt(md || '(无工作日志)', traceTail, this.cfg.keepLastTurns);
+
+      await this.adapter.destroyEngine();
+      await this.adapter.rebuildSession({
+        nCtx: this.cfg.nCtx,
+        systemPrompt,
+        level: this.cfg.level,
+        reason,
+      });
+      const ok = (await this.adapter.health?.()) ?? true;
+      return { ok, stage: 'release', reason, probeState: gate.probeState };
+    } catch (err) {
+      return { ok: false, stage: 'release', reason, error: String(err.message).slice(0, 500) };
+    } finally {
+      this._busy = false;
+    }
+  }
+
+  /**
+   * 统一闸门：动手前必须探测。
+   * 本插件自建引擎，归属采 'adapter-exclusive'；会话删除链路另走 'lease'。
+   */
+  async #gateRelease() {
+    const probeResult = await probeAdapter(this.adapter, { timeoutMs: this.cfg.probeTimeoutMs });
+    const verdict = evaluateGate({
+      probeState: probeResult.state,
+      snapshot: probeResult.snapshot,
+      ownership: 'adapter-exclusive',
+    });
+    return { ...verdict, probeState: probeResult.state, probeCode: probeResult.code };
+  }
+
+  /**
+   * DSH 用未闭合的 compaction/start 事件当锁。拿不准就当忙——宁可不动。
+   */
+  async #compactionOpen() {
+    if (typeof this.adapter?.isCompactionOpen !== 'function') return false;
+    try {
+      return Boolean(await this.adapter.isCompactionOpen());
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * 只固化工作日志，不进状态机。
+   * compaction-driven 模式下引擎归宿主管，TEARING_DOWN/REBUILDING 无意义。
+   */
+  async #solidifyOnly(reason) {
+    const built = await this.#writeWorklog();
+    if (!built.ok) {
+      return built.final || { ok: false, stage: 'rollback', error: built.rollbackMsg };
+    }
+    return { ok: true, stage: 'log_committed', reason, logPath: this.worklogPath };
+  }
+
+  /**
+   * 摘要 -> L5 校验 -> L6 原子提交。不碰状态机、不碰引擎。
+   * 调用方负责根据返回决定回滚与后续动作。
+   */
+  async #writeWorklog() {
+    const prevMd = safeRead(this.worklogPath);
+    const prev = prevMd ? wl.parseWorklog(prevMd) : { goal: '', entries: [], negations: [] };
+    const traceTail = readRawTraceTail({ logPath: this.worklogPath, maxTurns: this.cfg.keepLastTurns });
+
+    let raw;
+    try {
+      raw = await this.adapter.summarize(buildPrompt(prevMd, traceTail), {
+        maxTokens: this.cfg.maxSummaryTokens,
+      });
+    } catch (err) {
+      return { ok: false, rollbackMsg: `summarize_failed:${err.message}` };
+    }
+
+    // V1：总结超长/为空 -> 不清理
+    const tokens = defaultCountTokens(raw || '');
+    if (!raw || tokens > this.cfg.maxSummaryTokens) {
+      return {
+        ok: false,
+        rollbackMsg: `summary_too_long:${tokens}`,
+        final: { ok: false, stage: 'summary-size', tokens },
+      };
+    }
+
+    let modelEntries;
+    try {
+      modelEntries = wl.parseModelEntries(raw);
+    } catch (err) {
+      return {
+        ok: false,
+        rollbackMsg: `summary_unparseable:${err.message}`,
+        final: { ok: false, stage: 'parse', error: err.message },
+      };
+    }
+
+    const assigned = wl.assignIds(modelEntries, prev.entries);
+    const negations = wl.mergeNegations(prev.negations, prev.entries, assigned);
+    const trace = prevMd ? extractTraceSection(prevMd) : '';
+
+    const doc = wl.renderWorklog({
+      sessionId: this.sessionId,
+      goal: prev.goal || '(未声明)',
+      entries: assigned,
+      negations,
+      rawTrace: trace,
+    });
+
+    const verdict = wl.validateWorklog({
+      prev,
+      next: wl.parseWorklog(doc),
+      limits: {
+        droppedRatioLimit: this.cfg.droppedRatioLimit,
+        entityJaccardMin: this.cfg.entityJaccardMin,
+        entryJaccardMin: this.cfg.entryJaccardMin,
+      },
+    });
+    if (!verdict.ok) {
+      return {
+        ok: false,
+        rollbackMsg: `l5:${verdict.reasons.join('|')}`,
+        final: { ok: false, stage: 'l5', reasons: verdict.reasons },
+      };
+    }
+
+    // L6 原子提交
+    fs.mkdirSync(path.dirname(this.worklogPath), { recursive: true });
+    const tmpPath = `${this.worklogPath}.tmp`;
+    fs.writeFileSync(tmpPath, doc, 'utf8');
+    try {
+      wl.commitAtomic({ tmpPath, finalPath: this.worklogPath, backupPath: this.backupPath });
+    } catch (err) {
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {
+        /* ignore */
+      }
+      return { ok: false, rollbackMsg: `commit_failed:${err.message}` };
+    }
+
+    return { ok: true, doc, traceTail };
   }
 
   /* -------------------------------------------------------------- 崩溃恢复 */

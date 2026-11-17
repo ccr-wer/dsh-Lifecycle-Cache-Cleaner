@@ -22,6 +22,20 @@ export class FakeAdapter extends BaseAdapter {
     this.lastSystemPrompt = null;
     this.lastNCtx = null;
     this.lastLevel = null;
+    this.probeCalls = 0;
+    // 默认模拟“本机有部署”；传 { probe: {...} } / { probe: () => ... } / { probe: new Error() } 可改
+    this.probeResult = opts.probe ?? {
+      installed: true,
+      models: [{ modelId: this.modelId, sizeBytes: 8 * 1024 ** 3 }],
+      slots: [],
+    };
+  }
+
+  async probeEngine() {
+    this.probeCalls += 1;
+    if (this.probeResult instanceof Error) throw this.probeResult;
+    if (typeof this.probeResult === 'function') return await this.probeResult();
+    return this.probeResult;
   }
 
   async usageRatio() {

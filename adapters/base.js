@@ -46,4 +46,16 @@ export class BaseAdapter {
   async health() {
     return true;
   }
+
+  /**
+   * 本地引擎探测。必须反映“本机到底有没有部署”。
+   *
+   * 返回 `{ installed: boolean, models: Array, slots?: Array }`。
+   * **不实现 = 未知 = 永不清理**（fail-closed），这是统一闸门的默认行为。
+   *
+   * @returns {Promise<{installed:boolean, models:Array, slots?:Array}>}
+   */
+  async probeEngine() {
+    throw new Error('probeEngine() not implemented');
+  }
 }

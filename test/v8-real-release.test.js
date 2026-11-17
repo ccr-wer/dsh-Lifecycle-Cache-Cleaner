@@ -13,7 +13,7 @@ import {
 import { LeaseRegistry } from '../lib/core/engine-lease.js';
 import { EngineProbe } from '../lib/core/engine-probe.js';
 import { SessionDeleter, DELETE_STATE } from '../session-deleter.js';
-import { createLlamaCppAdapter } from '../adapters/llamacpp.js';
+import { createLlamaCppAdapter } from '../adapters/engine/llamacpp.js';
 import { fakeTransport, seqSampler, sleep } from './helpers/fakes.js';
 
 const GB = 1024 ** 3;

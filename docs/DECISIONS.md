@@ -151,3 +151,34 @@ Ollama 没有 per-slot 概念。"slot 档"对它而言是无意义动作，与�
 - 不用状态机锁：`delete()` 与归档是两条独立路径，归档失败不影响删除。
 
 **可验证落点**：V11-1（删光不删记忆）、V11-3（扫描零写）、V11-5（无 confirmed 拒绝）、V11-6（移动+可 restore）、V11-7（残留索引不误报）。
+
+---
+
+## D13. 清理一律过闸门；探测不到部署就不动引擎
+
+**背景**：探测只存在于“删除会话”链路，压缩链路与水位重建链路直接调 `destroyEngine()`，三条路的行为不一致。
+
+**决策**（用户拍板）：
+
+1. **合并为单包**：不再拆 core。跨包相对引用会让 npm 发布再次断裂，而两个包本质上就是一个插件。
+2. **探测缺失 = `unknown` = 不清理**（fail-closed）。适配器不实现 `probeEngine()` 就永远不清理。
+3. **日志整理完成才算压缩完成**：`onCompacted()` 的 `compactionComplete` 只取决于日志固化；缓存释放是后置动作，失败不影响“压缩完成”。
+
+**结构**：
+
+```
+会话删除 delete()  ┐
+压缩完成 onCompacted() ├─▶ lib/core/release-gate.js ─▶ 探测 ─▶ 归属 ─▶ 放行/拒绝
+水位重建 rebuild()   │        （唯一入口，唯一安全阀出口）
+手动 / 崩溃续跑      ┘
+```
+
+归属有两种模式：`lease`（会话删除，三要素必中）与 `adapter-exclusive`（本包自建引擎，适配器即所有者）。
+
+**可验证落点**：`test/release-gate.test.js` 的 I1–I5；`test/compaction-seam.test.js` 的 S1–S10；合并后全量 91 项（89 pass / 2 skip）。
+
+---
+
+## T10. 适配器尚未实现 `probeEngine()`
+
+`adapters/dsh.js` 仍是空壳，因此真实 DSH 环境下闸门会持续返回 `skip_unknown` —— **这是当前期望行为**（宁可不动），但不代表功能可用。实测环境就绪后必须实现 `probeEngine()`，否则“能清理”这件事从未被真正验证过。

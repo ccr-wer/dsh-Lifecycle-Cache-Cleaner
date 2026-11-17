@@ -1,15 +1,40 @@
 {
   "name": "lifecycle-cache-cleaner",
   "version": "0.1.0",
-  "description": "Local-agent KV cache lifecycle manager: overflow guard + worklog solidification + handle destroy/rebuild.",
+  "description": "DSH 本地 Agent 的 KV cache 生命周期管理：溢出闸门 + 工作日志固化 + 统一清理闸门（探测不到部署就不清理）+ 工作区记忆孤儿归档",
   "type": "module",
   "main": "cleaner.js",
   "engines": {
     "node": ">=18.17"
   },
+  "files": [
+    "cleaner.js",
+    "session-deleter.js",
+    "overflow-guard.js",
+    "raw-trace.js",
+    "state.js",
+    "worklog.js",
+    "lib/",
+    "adapters/",
+    "docs/"
+  ],
   "scripts": {
     "test": "node --test",
-    "test:v2": "node --test test/rss-release.test.js"
+    "test:gate": "node --test test/release-gate.test.js",
+    "test:seam": "node --test test/compaction-seam.test.js",
+    "test:whalebone": "node --test test/v7-probe-ownership.test.js test/v8-real-release.test.js test/v9-probe-failure.test.js test/v10-concurrency.test.js test/v11-workspace-orphan.test.js"
+  },
+  "keywords": [
+    "dsh",
+    "kv-cache",
+    "ollama",
+    "llama.cpp",
+    "vram",
+    "context-compaction"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ccr-wer/dsh-Lifecycle-Cache-Cleaner.git"
   },
   "license": "MIT"
 }

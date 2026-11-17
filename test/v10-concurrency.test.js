@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { LeaseRegistry } from '../lib/core/engine-lease.js';
 import { EngineProbe } from '../lib/core/engine-probe.js';
 import { SessionDeleter, DELETE_STATE } from '../session-deleter.js';
-import { createOllamaAdapter } from '../adapters/ollama.js';
+import { createOllamaAdapter } from '../adapters/engine/ollama.js';
 import { fakeTransport, seqSampler } from './helpers/fakes.js';
 
 const LEASE = {

@@ -4,10 +4,12 @@
  * 待确认的宿主 API（全部标 TODO，不要凭猜测实现）：
  *
  * 1) 生命周期钩子名
- *    - 是否存在"上下文将满"事件？（对应 rebuild_watermark 的最好挂载点）
- *    - 插件卸载语义：Cordis 的 ctx.on('dispose') / ctx.effect() 是否可作为
- *      "引擎销毁前"窗口？若可，onModelSwitch 的前置窗口就有了。
- *    - 是否存在 session end / beforeExit？
+ *    - 【已确认】存在原生上下文压缩：服务 `ctx.compaction`（CompactionEngine），
+ *      随包自带 `@deepseek-ai/dsh-compaction-basic`（自动）与 `/compact`（手动）。
+ *      压缩会向会话日志追加 `compaction/start|summary|end`，**只写日志、不进 surface**。
+ *      我们的挂载点：`compaction/end`（无 error）-> LifecycleCacheCleaner.onCompacted()。
+ *    - 【已确认】token 计量走 `ctx.tokenMeter`，不要再按字符数自估。
+ *    - 【待确认】Cordis 的 ctx.on('dispose') / ctx.effect() 能否作为"引擎销毁前"窗口。
  *
  * 2) 引擎清理接口
  *    - DSH 是否自己持有 llama.cpp context？还是走外部 llama-server / Ollama？
@@ -18,7 +20,7 @@
  *    - 默认 --parallel 是 1 还是 N？这决定"一进程一会话"是否成立。
  *
  * 4) token 计量
- *    - 是否有官方 usage（含模板/工具 schema）？还是只能自己算？
+ *    - 【已确认】见 part 1：`ctx.tokenMeter`。
  *
  * 5) 模型切换
  *    - 切换是"改 provider 配置"还是"重启 runtime"？有无切换前回调？
@@ -32,8 +34,31 @@ export class DshAdapter extends BaseAdapter {
     this._handle = null;
   }
 
+  /**
+   * 能力探测。宿主没挂压缩后端时 compaction=false，
+   * cleaner 会自动回退到自带水位触发——绝不假设能力存在。
+   */
+  get capabilities() {
+    const ctx = this.host?.ctx;
+    return {
+      compaction: Boolean(ctx?.compaction),
+      tokenMeter: Boolean(ctx?.tokenMeter),
+    };
+  }
+
+  /**
+   * 压缩锁：DSH 用未闭合的 `compaction/start` 当持久锁。
+   * 宿主未实现时抛错，cleaner 会按“忙”处理（宁可不动）。
+   */
+  async isCompactionOpen() {
+    if (typeof this.host?.isCompactionOpen === 'function') {
+      return await this.host.isCompactionOpen();
+    }
+    throw new Error('TODO: DshAdapter.isCompactionOpen（需读会话日志中未闭合的 compaction/start）');
+  }
+
   async usageRatio() {
-    // TODO: 优先读宿主 usage；退化方案见 README「待宿主确认项」
+    // TODO: 优先读宿主 ctx.tokenMeter；拿不到再退到 defaultCountTokens 估算
     throw new Error('TODO: DshAdapter.usageRatio');
   }
 

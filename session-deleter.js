@@ -11,6 +11,7 @@
  *  - 同一会话并发删除幂等。
  */
 import { decide, VERDICT } from './lib/core/ownership.js';
+import { evaluateGate } from './lib/core/release-gate.js';
 import { cleanAndVerify, CLEAN_LEVELS, CLEAN_STATUS } from './lib/core/vram-cleaner.js';
 import { findOrphanWorkspaces } from './lib/core/orphan-scan.js';
 
@@ -141,20 +142,23 @@ export class SessionDeleter {
     const probeResult = await this.#probeFor(lease);
 
     emit(DELETE_STATE.OWNERSHIP_CHECK, { probeState: probeResult.state });
-    const verdict = decide({
-      lease,
-      snapshot: probeResult.snapshot,
+    // 唯一闸门：absent / unknown / 无租约都走这里拒绝，本文件不再自行判定
+    const gate = evaluateGate({
       probeState: probeResult.state,
+      snapshot: probeResult.snapshot,
+      lease,
+      ownership: 'lease',
       allowedPidPaths: this.cfg.allowedPidPaths,
     });
 
-    if (verdict.verdict !== VERDICT.OWNED) {
-      emit(DELETE_STATE.SKIP_CLEAN, { verdict: verdict.verdict, code: verdict.code });
+    if (!gate.proceed) {
+      const code = gate.cause || gate.code;
+      emit(DELETE_STATE.SKIP_CLEAN, { verdict: gate.verdict, code });
       return finish({
         state: DELETE_STATE.SKIP_CLEAN,
         cleaned: false,
-        code: verdict.code,
-        verdict: verdict.verdict,
+        code,
+        verdict: gate.verdict,
         probeState: probeResult.state,
       });
     }
