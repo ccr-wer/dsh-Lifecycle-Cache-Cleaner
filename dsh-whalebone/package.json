@@ -1,0 +1,15 @@
+{
+  "name": "dsh-whalebone",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "session-deleter.js",
+  "engines": { "node": ">=18.17" },
+  "scripts": {
+    "test": "node --test",
+    "test:v7": "node --test test/v7-probe-ownership.test.js",
+    "test:v8": "node --test test/v8-real-release.test.js",
+    "test:v9": "node --test test/v9-probe-failure.test.js",
+    "test:v10": "node --test test/v10-concurrency.test.js"
+  },
+  "private": true
+}
