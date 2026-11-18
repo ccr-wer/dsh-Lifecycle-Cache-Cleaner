@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { renameWithRetry } from './lib/core/atomic.js';
 
 export const STATUS = Object.freeze({
   TODO: 'todo',
@@ -251,7 +252,7 @@ export function commitAtomic({ tmpPath, finalPath, backupPath }) {
     fs.mkdirSync(path.dirname(backupPath), { recursive: true });
     fs.copyFileSync(tmpPath, backupPath);
   }
-  fs.renameSync(tmpPath, finalPath);
+  renameWithRetry(tmpPath, finalPath);
   const readback = crypto.createHash('sha256').update(fs.readFileSync(finalPath)).digest('hex');
   if (readback !== sha) throw new Error('commit verify failed: checksum mismatch');
   return { sha, bytes: buf.length };

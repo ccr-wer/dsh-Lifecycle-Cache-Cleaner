@@ -7,7 +7,7 @@
  *  - 每次迁移都落盘（tmp -> fsync -> rename），否则 tearing_down 崩了就丢。
  */
 import fs from 'node:fs';
-import path from 'node:path';
+import { writeFileAtomic } from './lib/core/atomic.js';
 
 export const PHASES = Object.freeze({
   IDLE: 'idle',
@@ -49,16 +49,7 @@ export function recoveryAction(phase) {
 }
 
 export function writeJsonAtomic(file, obj) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  const fd = fs.openSync(tmp, 'w');
-  try {
-    fs.writeSync(fd, JSON.stringify(obj, null, 2));
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-  fs.renameSync(tmp, file);
+  writeFileAtomic(file, JSON.stringify(obj, null, 2));
 }
 
 export function readJson(file) {

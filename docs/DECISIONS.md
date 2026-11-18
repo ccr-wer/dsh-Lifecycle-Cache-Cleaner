@@ -182,3 +182,37 @@ Ollama 没有 per-slot 概念。"slot 档"对它而言是无意义动作，与�
 ## T10. 适配器尚未实现 `probeEngine()`
 
 `adapters/dsh.js` 仍是空壳，因此真实 DSH 环境下闸门会持续返回 `skip_unknown` —— **这是当前期望行为**（宁可不动），但不代表功能可用。实测环境就绪后必须实现 `probeEngine()`，否则“能清理”这件事从未被真正验证过。
+
+---
+
+## D14. 跨平台：验证采样、路径归一、rename 重试
+
+**背景**：审计发现三处“只在某个平台成立”的假设。判定逻辑本身是跨平台的（路径全注入、core 不起进程、引擎控制走 HTTP），但验证环节不是。
+
+**决策**：
+
+1. **补全采样器**（`vram-cleaner.js`）
+   - `footprint` —— macOS，`vmmap` 的 Physical footprint（含 compressor）
+   - `nvidia-smi` —— Linux / Windows + NVIDIA，按进程 `used_memory`
+   - `proc-rss` —— Linux，`/proc/<pid>/smaps_rollup` 的 Pss，回退 `status` 的 VmRSS
+   - `win-rss` —— Windows，`tasklist` 的 Mem Usage（工作集）
+   - `pickSamplerKind()` 选型：有 NVIDIA 优先显存取数；未知平台返回 `null`，结果归 `unverifiable`（**不假装验证过**）。
+   - `top` 仍然硬拒绝。
+2. **路径归一**（`ownership.js`）
+   - `canonicalPath()`：`path.resolve` + win32 转小写，可选注入 `realpath` 解软链/junction 别名。
+   - 默认不做 IO，保持 `decide()` 可测；宿主层（`session-deleter`）注入 `realpathSync.native`。
+   - 归一失败不改变判定语义（该拒就拒），只是把“写法不同”从“不存在”里排除出去。
+3. **rename 重试**（`lib/core/atomic.js`）
+   - 只对 `EPERM` / `EBUSY` / `EACCES` 线性退避重试（默认 5 次，最坏 300ms）。
+   - `ENOENT` / `EXDEV` 等真实错误**一次就抛**，不许吞掉变成“看起来成功”。
+   - 五处 `tmp -> rename` 全部改为 `writeFileAtomic()` / `renameWithRetry()`。
+
+**可验证落点**：`test/cross-platform.test.js` 的 X1–X7；全量 98 项（96 pass / 2 skip）。
+
+---
+
+## T11. 非 macOS 尚未做过真机显存断言
+
+采样器补齐后，Windows/Linux 的解析逻辑有单元测试覆盖，但**没有在真机上验证过“删除会话 -> 显存真的掉下来”**。V2/V2b 在非 macOS 上 skip，这是目前唯一跑过真实下降断言的平台。
+
+发布说明里不许把 `proc-rss` / `win-rss` 写成“已验证跨平台释放”——它们只是“有了采样口径”。要摘掉这条 T11，需要：Windows 或 Linux 真机 + 至少一个本地引擎实例，跑一遍 `cleanAndVerify` 并留下 delta 证据。

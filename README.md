@@ -34,9 +34,29 @@ DSH 本地 Agent 的 KV cache 生命周期管理（单包）。
 2. 适配器至少实现 `probeEngine()` 与 `destroyEngine()`；前者返回
    `owned_idle | owned_busy | foreign | absent`，抛错即视为 `unknown`
 3. 会话创建时登记 `engine_ref`（租约），删除时只校验、不推断
-4. 跑 `node --test` 确认 91 项通过
+4. 跑 `node --test` 确认 98 项通过
 
 不实现 `probeEngine()` 也能装——代价是永远 `skip_unknown`，什么都不清理。
+
+## 跨平台
+
+| 能力 | Windows | Linux | macOS |
+|---|---|---|---|
+| 溢出闸门 / 日志固化 / 状态机 | ✅ | ✅ | ✅ |
+| 统一清理闸门（判定逻辑） | ✅ | ✅ | ✅ |
+| 引擎释放（HTTP） | ✅ | ✅ | ✅ |
+| 释放验证采样 | `tasklist` 工作集 | `/proc` 的 Pss（回退 VmRSS） | `vmmap` 的 footprint |
+| 显存口径验证 | `nvidia-smi` | `nvidia-smi` | 不适用 |
+
+`pickSamplerKind()` 按环境选采样器：有 NVIDIA 优先 `nvidia-smi`，否则按平台落到
+`footprint` / `proc-rss` / `win-rss`；未知平台不选——结果是 `unverifiable`，
+即“能清理但不声称已验证”。`top` 始终被拒绝。
+
+路径一律经 `canonicalPath()` 归一（`realpath` 解软链/junction，win32 转小写），
+否则同一目录的另一种写法会被判成“不在允许清单”，该清的不清。
+
+**已知边界**：真实下降断言（V2/V2b）只在 macOS 跑过，非 macOS 会 skip；
+Windows/Linux 采样器目前只有单元测试覆盖，没有真机显存断言。
 
 ## 结构
 
@@ -55,10 +75,10 @@ DSH 本地 Agent 的 KV cache 生命周期管理（单包）。
 ## 测试
 
 ```bash
-node --test               # 全部：91 项，89 pass / 2 skip
+node --test               # 全部：98 项，96 pass / 2 skip
 ```
 
-V1–V6 日志流水线，V7–V11 引擎释放与工作区记忆，S 系列压缩接缝，I 系列闸门不变量。
+V1–V6 日志流水线，V7–V11 引擎释放与工作区记忆，S 系列压缩接缝，I 系列闸门不变量，X 系列跨平台采样/归一/重试。
 
 更多取舍见 [`docs/DECISIONS.md`](docs/DECISIONS.md)，压缩挂载点见 [`docs/whalebone.md`](docs/whalebone.md)。
 

@@ -10,7 +10,8 @@
  *  - 处于 tearing_down/rebuilding 时直接 skipped_busy，不排队。
  *  - 同一会话并发删除幂等。
  */
-import { decide, VERDICT } from './lib/core/ownership.js';
+import fs from 'node:fs';
+import { decide, VERDICT, makeCanonicalizer } from './lib/core/ownership.js';
 import { evaluateGate } from './lib/core/release-gate.js';
 import { cleanAndVerify, CLEAN_LEVELS, CLEAN_STATUS } from './lib/core/vram-cleaner.js';
 import { findOrphanWorkspaces } from './lib/core/orphan-scan.js';
@@ -69,6 +70,11 @@ export class SessionDeleter {
       ...config,
     };
     this.inflight = new Map();
+    // 路径归一：realpath 解软链/junction 别名，win32 再转小写。
+    // 不这么做，同一目录的另一种写法会被判成"不在允许清单"，该清的不清。
+    this.canonicalize = makeCanonicalizer({
+      realpath: (p) => fs.realpathSync.native(p),
+    });
   }
 
   /**
@@ -149,6 +155,7 @@ export class SessionDeleter {
       lease,
       ownership: 'lease',
       allowedPidPaths: this.cfg.allowedPidPaths,
+      canonicalize: this.canonicalize,
     });
 
     if (!gate.proceed) {
@@ -261,6 +268,7 @@ export class SessionDeleter {
       snapshot: probeResult.snapshot,
       probeState: probeResult.state,
       allowedPidPaths: this.cfg.allowedPidPaths,
+      canonicalize: this.canonicalize,
     });
     if (v.verdict === VERDICT.OWNED) {
       const size = estimateBytes ?? probeResult.snapshot?.models?.[0]?.sizeBytes ?? null;

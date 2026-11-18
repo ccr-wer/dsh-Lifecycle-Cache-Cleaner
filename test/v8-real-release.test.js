@@ -18,10 +18,10 @@ import { fakeTransport, seqSampler, sleep } from './helpers/fakes.js';
 
 const GB = 1024 ** 3;
 
-test('V8-1：采样器拒绝 top，只允许 footprint / nvidia-smi', () => {
+test('V8-1：采样器拒绝 top，只接受白名单内的采样器', () => {
   assert.throws(
     () => makeSampler({ kind: 'top', pid: 1, exec: async () => '' }),
-    /只允许 footprint \/ nvidia-smi/,
+    /禁用 top/,
   );
   assert.throws(
     () => makeSampler({ kind: 'ps', pid: 1, exec: async () => '' }),
