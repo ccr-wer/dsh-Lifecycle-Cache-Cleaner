@@ -34,7 +34,7 @@ DSH 本地 Agent 的 KV cache 生命周期管理（单包）。
 2. 适配器至少实现 `probeEngine()` 与 `destroyEngine()`；前者返回
    `owned_idle | owned_busy | foreign | absent`，抛错即视为 `unknown`
 3. 会话创建时登记 `engine_ref`（租约），删除时只校验、不推断
-4. 跑 `node --test` 确认 98 项通过
+4. 跑 `node --test` 确认 108 项通过
 
 不实现 `probeEngine()` 也能装——代价是永远 `skip_unknown`，什么都不清理。
 
@@ -58,6 +58,31 @@ DSH 本地 Agent 的 KV cache 生命周期管理（单包）。
 **已知边界**：真实下降断言（V2/V2b）只在 macOS 跑过，非 macOS 会 skip；
 Windows/Linux 采样器目前只有单元测试覆盖，没有真机显存断言。
 
+## 记忆
+
+两层，写入权限不同：
+
+| 层 | 文件 | 写入口 |
+|---|---|---|
+| 整段文档（人工） | `memory/workspaces/<key>.md` | `WorkspaceMemoryStore.write({ confirmed: true })` |
+| 条目（模型提议） | `memory/typed.json` | `proposeShared()` → `approveShared({ confirmed: true })` |
+
+**归属由程序裁决，不听模型的**：模型只给 `scope` 建议，命中本地绑定信号
+（盘符路径、POSIX 绝对路径、`localhost:port`、端口号、文件名后缀）就强制落工作区。
+
+**写入前去重**（相似度阈值 0.9）：
+
+| 情形 | 动作 |
+|---|---|
+| 完全相同 | 不新增，只刷新 `updatedAt` |
+| 高相似（≥ 0.9） | 新条目 `supersedes` 旧的，旧条目标 `supersededBy`——**不删** |
+| 骨架相同但数字全不同 | 两条都留，互标 `conflict`，等用户裁决 |
+
+**升级**：同一事实在 ≥2 个工作区被独立确认后，自动复制一条到共享层。
+
+**读取**：重建时注入 `## 共享记忆`（≤1KB）+ `## 本工作区记忆`（≤2KB），超预算截断并计数。
+预算不能去掉——记忆越长越容易触发重建，重建又塞进更长的记忆，会形成正反馈。
+
 ## 结构
 
 | 路径 | 职责 |
@@ -75,10 +100,10 @@ Windows/Linux 采样器目前只有单元测试覆盖，没有真机显存断言
 ## 测试
 
 ```bash
-node --test               # 全部：98 项，96 pass / 2 skip
+node --test               # 全部：108 项，106 pass / 2 skip
 ```
 
-V1–V6 日志流水线，V7–V11 引擎释放与工作区记忆，S 系列压缩接缝，I 系列闸门不变量，X 系列跨平台采样/归一/重试。
+V1–V6 日志流水线，V7–V11 引擎释放与工作区记忆，S 系列压缩接缝，I 系列闸门不变量，X 系列跨平台采样/归一/重试，M 系列记忆归属与消重。
 
 更多取舍见 [`docs/DECISIONS.md`](docs/DECISIONS.md)，压缩挂载点见 [`docs/whalebone.md`](docs/whalebone.md)。
 

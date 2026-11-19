@@ -11,6 +11,7 @@ import path from 'node:path';
 import { PHASES, StateStore, recoveryAction } from './state.js';
 import { OverflowGuard, defaultCountTokens } from './overflow-guard.js';
 import { appendRawTrace, readRawTraceTail, extractTraceSection } from './raw-trace.js';
+import { TypedMemoryStore } from './lib/core/memory-store.js';
 import * as wl from './worklog.js';
 import { probeAdapter, evaluateGate } from './lib/core/release-gate.js';
 
@@ -58,9 +59,10 @@ function buildPrompt(prevDoc, traceTail) {
   ].join('\n');
 }
 
-function buildSystemPrompt(doc, traceTail, keepLastTurns) {
+function buildSystemPrompt(doc, traceTail, keepLastTurns, memoryText = '') {
   return [
     '你在继续一个会话。下面是你的工作日志与最近几轮原文，请据此接着做。',
+    memoryText ? `\n${memoryText}` : '',
     '',
     doc.trim(),
     '',
@@ -78,7 +80,7 @@ const safeRead = (p) => {
 };
 
 export class LifecycleCacheCleaner {
-  constructor({ adapter, rootDir, sessionId, config = {} }) {
+  constructor({ adapter, rootDir, sessionId, workspaceId = null, config = {} }) {
     if (!adapter) throw new Error('adapter required');
     if (!sessionId) throw new Error('sessionId required (程序生成 UUID，不接受外部字符串)');
     if (!/^[A-Za-z0-9._-]+$/.test(sessionId)) throw new Error('sessionId 含非法字符');
@@ -86,7 +88,9 @@ export class LifecycleCacheCleaner {
     this.adapter = adapter;
     this.cfg = { ...DEFAULTS, ...config };
     this.sessionId = sessionId;
+    this.workspaceId = workspaceId || null;
     this.rootDir = rootDir || process.cwd();
+    this.memory = new TypedMemoryStore({ rootDir: this.rootDir });
     this.worklogPath = path.join(this.rootDir, 'worklogs', `${sessionId}.md`);
     this.backupPath = path.join(this.rootDir, 'worklogs', '.bak', `${sessionId}.md`);
     this.spillDir = path.join(this.rootDir, 'spill');
@@ -205,7 +209,7 @@ export class LifecycleCacheCleaner {
     st.transition(PHASES.TEARING_DOWN, { committed_log_path: this.worklogPath });
 
     // 物理清理：只有销毁重建，没有"清缓存"
-    const systemPrompt = buildSystemPrompt(doc, traceTail, this.cfg.keepLastTurns);
+    const systemPrompt = buildSystemPrompt(doc, traceTail, this.cfg.keepLastTurns, this.#memoryText());
     try {
       await this.adapter.destroyEngine();
     } catch (err) {
@@ -293,7 +297,12 @@ export class LifecycleCacheCleaner {
 
       const md = safeRead(this.worklogPath);
       const traceTail = readRawTraceTail({ logPath: this.worklogPath, maxTurns: this.cfg.keepLastTurns });
-      const systemPrompt = buildSystemPrompt(md || '(无工作日志)', traceTail, this.cfg.keepLastTurns);
+      const systemPrompt = buildSystemPrompt(
+        md || '(无工作日志)',
+        traceTail,
+        this.cfg.keepLastTurns,
+        this.#memoryText(),
+      );
 
       await this.adapter.destroyEngine();
       await this.adapter.rebuildSession({
@@ -457,7 +466,7 @@ export class LifecycleCacheCleaner {
     if (action === 'resume_rebuild') this.store.transition(PHASES.REBUILDING);
 
     try {
-      const systemPrompt = buildSystemPrompt(doc, '', this.cfg.keepLastTurns);
+      const systemPrompt = buildSystemPrompt(doc, '', this.cfg.keepLastTurns, this.#memoryText());
       await this.adapter.rebuildSession({
         nCtx: this.cfg.nCtx,
         systemPrompt,
@@ -482,6 +491,15 @@ export class LifecycleCacheCleaner {
     return this.rebuild({ reason: `periodic:${ratio.toFixed(2)}` });
   }
 
+  /** 记忆段：读失败一律降为空串，不许因此阻断重建。 */
+  #memoryText() {
+    try {
+      return this.memory.render({ workspaceId: this.workspaceId }).text;
+    } catch {
+      return '';
+    }
+  }
+
   /** 共享日志写入前的确认队列（模型只能提议，不能直写）。 */
   proposeShared(pending) {
     const dir = path.join(this.rootDir, 'shared', '.pending');
@@ -491,5 +509,32 @@ export class LifecycleCacheCleaner {
       JSON.stringify({ ...pending, session: this.sessionId, at: Date.now() }, null, 2),
       'utf8',
     );
+  }
+
+  /**
+   * 消费提议：人工/宿主确认后才落盘。
+   * 归属不由提议决定——memory-store 会按本地绑定信号重新裁决。
+   */
+  approveShared({ sessionId = this.sessionId, confirmed = false } = {}) {
+    if (!confirmed) return { ok: false, code: 'confirm_required' };
+    const file = path.join(this.rootDir, 'shared', '.pending', `${sessionId}.json`);
+    if (!fs.existsSync(file)) return { ok: false, code: 'no_pending' };
+
+    let payload;
+    try {
+      payload = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+      return { ok: false, code: 'pending_unparsable' };
+    }
+
+    const r = this.memory.propose({
+      text: payload.text ?? '',
+      scope: payload.scope ?? 'unsure',
+      workspaceId: this.workspaceId,
+      source: 'approved',
+      confirmed: true,
+    });
+    if (r.ok) fs.unlinkSync(file);
+    return r;
   }
 }
