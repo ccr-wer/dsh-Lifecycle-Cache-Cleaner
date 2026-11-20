@@ -7,7 +7,7 @@ DSH 本地 Agent 的 KV cache 生命周期管理（单包）。
 - **入口闸门**：单条工具输出过大 / 插入后水位越界 → 落盘，不调模型。
 - **工作日志固化**：摘要 → L5 校验（一致性）→ L6 原子提交（失败即回滚）。
 - **统一清理闸门**：所有清理路径共用一条规则——**探测不到本地部署就不动引擎**。
-- **工作区记忆**：删光会话不删记忆；孤儿只标记；归档需确认且可撤销。
+- **记忆分层**：工作区 / 共享两层；模型只提议、归属由程序裁决；写入前消重，≥2 工作区自动升级；删光会话不删记忆，归档可撤销。
 
 ## 一条最重要的规则
 
@@ -93,6 +93,8 @@ Windows/Linux 采样器目前只有单元测试覆盖，没有真机显存断言
 | `lib/core/ownership.js` | 归属判定（唯一安全阀，纯函数） |
 | `lib/core/engine-probe.js` | 只读探测（零写操作） |
 | `lib/core/vram-cleaner.js` | 分级释放 + 采样验证（禁用 `top`） |
+| `lib/core/memory-store.js` | 记忆条目：归属裁决 / 消重 / 自动升级 / 注入预算 |
+| `lib/core/atomic.js` | 原子写 + rename 重试（Windows 瞬时锁） |
 | `lib/core/workspace-registry.js` `workspace-memory.js` | 工作区索引 / 记忆（归档可撤销） |
 | `lib/core/orphan-scan.js` | 孤儿扫描（只标记，不删除） |
 | `adapters/` | 日志流水线适配器；`adapters/engine/` 为引擎适配器 |
