@@ -1,4 +1,4 @@
-# lifecycle-cache-cleaner
+# dsh-lifecycle-cache-cleaner
 
 DSH 本地 Agent 的 KV cache 生命周期管理（单包）。
 
@@ -30,7 +30,7 @@ DSH 本地 Agent 的 KV cache 生命周期管理（单包）。
 
 要求 Node >= 18.17。
 
-1. 把包放进 DSH 插件目录，或 `npm install <本仓库>`
+1. 把包放进 DSH 插件目录，或 `npm install dsh-lifecycle-cache-cleaner`
 2. 适配器至少实现 `probeEngine()` 与 `destroyEngine()`；前者返回
    `owned_idle | owned_busy | foreign | absent`，抛错即视为 `unknown`
 3. 会话创建时登记 `engine_ref`（租约），删除时只校验、不推断

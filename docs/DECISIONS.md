@@ -238,6 +238,17 @@ Ollama 没有 per-slot 概念。"slot 档"对它而言是无意义动作，与�
 
 ---
 
+## D16. npm 包名补上 DSH 前缀
+
+初始发布用的是 `lifecycle-cache-cleaner`，与仓库名 `dsh-Lifecycle-Cache-Cleaner` 不一致。npm 不支持改名，所以采取“新名发布 + 旧包 deprecate”而不是整包删除：
+
+- 新包：`dsh-lifecycle-cache-cleaner`（首个版本 0.3.1，与 git tag 对齐）
+- 旧包：`lifecycle-cache-cleaner` 保留，但打上 deprecation 提示指向新名；不删，避免已引用方直接中断
+
+GitHub 仓库名不改（本来就对）。
+
+---
+
 ## T11. 非 macOS 尚未做过真机显存断言
 
 采样器补齐后，Windows/Linux 的解析逻辑有单元测试覆盖，但**没有在真机上验证过“删除会话 -> 显存真的掉下来”**。V2/V2b 在非 macOS 上 skip，这是目前唯一跑过真实下降断言的平台。
