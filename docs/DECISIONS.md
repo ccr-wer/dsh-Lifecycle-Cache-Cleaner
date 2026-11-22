@@ -573,6 +573,39 @@ GitHub 仓库名不改（本来就对）。
 **代价**：改标题会改变分组顺序（按名字排）；同名工作区的组名比路径短但仍有歧义残留时，
 只能靠悬停看全路径。
 
+## D30. 删会话要连导航页的记录一起摘掉
+
+**背景**：0.8.0 的删除只把会话目录搬进回收站。用户在导航页仍然看到那条会话，点进去报
+`session "…" not found (session/not-found)`。原因不是 UI 缓存，而是**宿主工作区索引**
+（`storages/workspace.json` 的 `sessionIds`）根本不知道文件被搬走了。
+
+**决策**：删除成功后补三步，缺一不可：
+
+1. **摘索引**：`workspaceRegistry.list()` 里找到包含该 id 的工作区，调 `workspace.detachSession(id)`。
+   这是宿主自己提供的持久化 API，不是改文件。
+2. **清投影缓存**：删 `<rootDir>/storages/session_projcache/sessions/session-<id>.json`。
+   留着不会报错，但宿主重开时会拿旧缓存去拼一个已不存在的会话。
+3. **让界面重读**：Client 侧除了 `ctx.sessions.refresh()`，再调 `ctx.workspaces.refresh()`；
+   侧栏的工作区列表就是从后者来的。
+
+**存量脏数据**：索引里已经记着、目录却不在的会话（本机就有一条），删除时不会再扫到它，
+于是永远挂在侧栏。补一个显式入口：
+
+- `GET /sessions` 附带 `orphans`（索引里有、磁盘上没有）；
+- 面板顶部显示「导航页还有 N 条失效记录」，点「清理失效记录」调 `POST /sessions/repair`，
+  逐个 detach，幂等。
+
+**代价与已知边界**：
+
+- `workspaceRegistry` 是可选服务，拿不到时 `detach` 与 `repair` 都回 503（`workspace_unavailable`），
+  删除本身仍然成功——目录已经搬走，只是导航页会残留，需要重启宿主让持久化层重扫磁盘。
+- `repair` 只摘「目录不存在」的 id，不动任何磁盘文件；真删仍然是删除流程的事。
+- **id 形状必须归一化**：宿主 `sessionIds` 里存的是 `session-<uuid>`（带前缀），
+  磁盘目录名与我们的列表用裸 uuid。第一版实现直接比较，结果把全部 6 条都判成失效——
+  点一次「清理」就会清空工作区索引。现在两边都 `replace(/^session-/)` 再比，
+  但**交给 `detachSession` 的仍是宿主那份原值**。这条要有测试盯着（W10）。
+- 宿主内部方法名（`detachSession` / `sessionIds`）属于实现细节，宿主改了我们跟着改。
+
 ## T11. 非 macOS 尚未做过真机显存断言
 
 采样器补齐后，Windows/Linux 的解析逻辑有单元测试覆盖，但**没有在真机上验证过“删除会话 -> 显存真的掉下来”**。V2/V2b 在非 macOS 上 skip，这是目前唯一跑过真实下降断言的平台。

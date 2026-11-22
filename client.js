@@ -71,6 +71,9 @@ window.__ModuleLoader__.load({
       'panel.close': '关闭',
       'panel.refresh': '刷新',
       'panel.unknown': '未知',
+      'panel.orphans': '导航页还有 {n} 条失效记录（会话目录已不在，点进去会报 not-found）',
+      'panel.repair': '清理失效记录',
+      'panel.repaired': '已摘掉 {n} 条失效记录。',
       'profile.button': '个性化',
       'profile.title': '个性化（只由你编辑）',
       'profile.hint': '这些内容由你在界面里写，模型没有任何写入口；保存后会原样进入 system prompt。',
@@ -179,6 +182,9 @@ window.__ModuleLoader__.load({
       'panel.close': 'Close',
       'panel.refresh': 'Refresh',
       'panel.unknown': 'unknown',
+      'panel.orphans': '{n} stale entries still listed in the sidebar (folder gone, opening them fails)',
+      'panel.repair': 'Drop stale entries',
+      'panel.repaired': 'Dropped {n} stale entries.',
       'profile.button': 'Personalize',
       'profile.title': 'Personalization (only you can edit)',
       'profile.hint': 'You write these here; the model has no way to write them. Saving puts them into the system prompt verbatim.',
@@ -324,6 +330,8 @@ window.__ModuleLoader__.load({
       '.lc-badgeWarn{border-color:var(--dsw-alias-state-warning-primary,#b7791f);color:var(--dsw-alias-state-warning-primary,#b7791f)}',
       '.lc-groupBody{padding:4px 10px 10px;border-top:1px solid var(--dsw-alias-border-l2,#eee)}',
       '.lc-proposal{background:var(--dsw-alias-fill-l1,rgba(0,0,0,.03));border-radius:6px;padding:6px 8px;margin:4px 0}',
+      '.lc-orphans{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;margin:6px 0;',
+      'border:1px dashed var(--dsw-alias-state-warning-primary,#b7791f);border-radius:8px}',
     ].join('');
 
     /** 只替换 `{name}`；locale 服务自身通常也会插值，这里兜底。 */
@@ -589,11 +597,12 @@ window.__ModuleLoader__.load({
           setSnapshot({
             phase: 'ready',
             sessions: Array.isArray(result?.sessions) ? result.sessions : [],
+            orphans: Array.isArray(result?.orphans) ? result.orphans : [],
             minIdleMs: Number(result?.minIdleMs) || 0,
           });
         } catch (error) {
           if (alive.current) {
-            setSnapshot({ phase: 'error', sessions: [], minIdleMs: 0, message: messageOf(error) });
+            setSnapshot({ phase: 'error', sessions: [], orphans: [], minIdleMs: 0, message: messageOf(error) });
           }
         }
       }, []);
@@ -630,6 +639,12 @@ window.__ModuleLoader__.load({
             } catch {
               /* 会话服务缺席时不影响删除结果 */
             }
+            try {
+              // 导航页的工作区列表也要重读，否则删掉的那条还挂在侧栏上（D30）。
+              clientCtx?.workspaces?.refresh?.();
+            } catch {
+              /* 同上 */
+            }
           } catch (error) {
             if (alive.current) setOutcome({ ok: false, text: messageOf(error) });
           } finally {
@@ -638,6 +653,29 @@ window.__ModuleLoader__.load({
         },
         [load, t],
       );
+
+      /** 清掉「导航页还显示、磁盘上已经没有」的失效记录。 */
+      const repair = React.useCallback(async () => {
+        setBusyId('__repair__');
+        setOutcome(null);
+        try {
+          const result = await request('POST', '/sessions/repair', {});
+          if (alive.current) {
+            setOutcome({ ok: true, text: t('panel.repaired', { n: result?.detached?.length ?? 0 }) });
+          }
+          await load();
+          try {
+            clientCtx?.sessions?.refresh?.();
+            clientCtx?.workspaces?.refresh?.();
+          } catch {
+            /* 刷新失败不影响清理结果 */
+          }
+        } catch (error) {
+          if (alive.current) setOutcome({ ok: false, text: messageOf(error) });
+        } finally {
+          if (alive.current) setBusyId(null);
+        }
+      }, [load, t]);
 
       const sessions = snapshot.sessions;
       const groups = [];
@@ -694,6 +732,25 @@ window.__ModuleLoader__.load({
                 snapshot.phase === 'loading' ? h('p', { className: 'lc-status' }, t('panel.loading')) : null,
                 snapshot.phase === 'error'
                   ? h('p', { className: 'lc-status lc-statusError' }, t('panel.error', { message: snapshot.message }))
+                  : null,
+                // 宿主索引里还记着、目录已经不在的会话：导航页会一直显示它们并报 not-found。
+                snapshot.phase === 'ready' && (snapshot.orphans ?? []).length > 0
+                  ? h(
+                      'div',
+                      { className: 'lc-orphans' },
+                      h('span', { className: 'lc-formHint' }, t('panel.orphans', { n: snapshot.orphans.length })),
+                      h(
+                        'button',
+                        {
+                          type: 'button',
+                          className: 'lc-btn lc-danger',
+                          disabled: busyId === '__repair__',
+                          onClick: () => void repair(),
+                          'data-lc-action': 'repair-sessions',
+                        },
+                        t('panel.repair'),
+                      ),
+                    )
                   : null,
                 snapshot.phase === 'ready' && sessions.length === 0
                   ? h('p', { className: 'lc-status' }, t('panel.empty'))

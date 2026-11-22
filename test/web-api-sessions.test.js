@@ -190,3 +190,108 @@ test('W6 没配置会话目录时回 503，不崩', async () => {
   assert.equal(list.statusCode, 503);
   assert.equal(list.json().code, 'sessions_unavailable');
 });
+
+test('W7 删除后把会话从宿主工作区索引里摘掉，并清投影缓存', async () => {
+  const env = makeEnv();
+  const { runtime } = fakeRuntime();
+  const detached = [];
+  const cacheDir = path.join(env.root, 'storages', 'session_projcache', 'sessions');
+  fs.mkdirSync(cacheDir, { recursive: true });
+  const cacheFile = path.join(cacheDir, `session-${UUID}.json`);
+  fs.writeFileSync(cacheFile, '{"projection":true}');
+
+  const route = captureRoute({
+    runtime,
+    connection: ownerConnection(),
+    sessionsDir: env.sessionsDir,
+    trashDir: env.trashDir,
+    rootDir: env.root,
+    workspaceHooks: {
+      listIndex: () => [{ path: 'C:\\ws\\a', sessionIds: [UUID] }],
+      detachSession: async (id) => {
+        detached.push(id);
+      },
+    },
+  });
+
+  const res = await call(
+    route,
+    makeReq({ method: 'POST', url: `${ROUTE_BASE}/sessions/delete`, body: JSON.stringify({ id: UUID, confirm: true }) }),
+  );
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(detached, [UUID], '必须把 id 从工作区索引摘掉，否则导航页还显示');
+  assert.equal(fs.existsSync(cacheFile), false, '投影缓存要一起清掉');
+});
+
+test('W8 GET /sessions 列出失效记录，repair 能把它们摘掉', async () => {
+  const env = makeEnv();
+  const { runtime } = fakeRuntime();
+  const ghost = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const detached = [];
+  const route = captureRoute({
+    runtime,
+    connection: ownerConnection(),
+    sessionsDir: env.sessionsDir,
+    trashDir: env.trashDir,
+    workspaceHooks: {
+      listIndex: () => [{ path: 'C:\\ws\\a', sessionIds: [UUID, ghost] }],
+      detachSession: async (id) => {
+        detached.push(id);
+      },
+    },
+  });
+
+  const listed = await call(route, makeReq());
+  const orphans = listed.json().result.orphans;
+  assert.deepEqual(orphans.map((item) => item.id), [ghost], '只有目录不存在的才算失效');
+
+  const repaired = await call(route, makeReq({ method: 'POST', url: `${ROUTE_BASE}/sessions/repair`, body: '{}' }));
+  assert.equal(repaired.statusCode, 200);
+  assert.deepEqual(repaired.json().result.detached, [ghost]);
+  assert.deepEqual(detached, [ghost]);
+});
+
+test('W9 没有工作区钩子时 repair 回 503，列表照常返回空 orphans', async () => {
+  const env = makeEnv();
+  const { runtime } = fakeRuntime();
+  const route = captureRoute({ runtime, connection: ownerConnection(), sessionsDir: env.sessionsDir, trashDir: env.trashDir });
+
+  const listed = await call(route, makeReq());
+  assert.deepEqual(listed.json().result.orphans, []);
+
+  const repaired = await call(route, makeReq({ method: 'POST', url: `${ROUTE_BASE}/sessions/repair`, body: '{}' }));
+  assert.equal(repaired.statusCode, 503);
+  assert.equal(repaired.json().code, 'workspace_unavailable');
+});
+
+test('W10 索引里的 id 带 session- 前缀：存在的不能误判，失效的按原样 detach', async () => {
+  const env = makeEnv();
+  const { runtime } = fakeRuntime();
+  const ghost = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const detached = [];
+  const route = captureRoute({
+    runtime,
+    connection: ownerConnection(),
+    sessionsDir: env.sessionsDir,
+    trashDir: env.trashDir,
+    workspaceHooks: {
+      // 宿主 workspace.json 里就是这个形状：带 session- 前缀。
+      listIndex: () => [{ path: 'C:\\ws\\a', sessionIds: [`session-${UUID}`, `session-${ghost}`] }],
+      detachSession: async (id) => {
+        detached.push(id);
+      },
+    },
+  });
+
+  const listed = await call(route, makeReq());
+  const orphans = listed.json().result.orphans;
+  assert.deepEqual(orphans.map((item) => item.normalizedId), [ghost], '存在的会话不能被误判成失效');
+  assert.deepEqual(
+    orphans.map((item) => item.id),
+    [`session-${ghost}`],
+    '给 detach 的 id 必须保留宿主前缀',
+  );
+
+  await call(route, makeReq({ method: 'POST', url: `${ROUTE_BASE}/sessions/repair`, body: '{}' }));
+  assert.deepEqual(detached, [`session-${ghost}`]);
+});

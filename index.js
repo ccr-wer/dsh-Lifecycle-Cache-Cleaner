@@ -218,6 +218,28 @@ export function apply(ctx, config = {}) {
         minIdleMs: config.sessionDeleteMinIdleMs ?? 120000,
         profileStore: runtime.profiles,
         listWorkspaces,
+        rootDir: runtime.rootDir,
+        // 删除会话后必须把宿主导航页的数据源也清掉，否则索引里还记着它（D30）。
+        workspaceHooks: registry
+          ? {
+              listIndex: () =>
+                registry.list().map((workspace) => ({
+                  path: workspace?.path ?? null,
+                  sessionIds: Array.isArray(workspace?.sessionIds) ? [...workspace.sessionIds] : [],
+                })),
+              detachSession: async (sessionId) => {
+                // 宿主 sessionIds 里存的是 `session-<uuid>`；我们手里可能是裸 uuid。
+                // 两边都归一化再比，真正 detach 时传宿主那份原值。
+                const normalize = (raw) => String(raw ?? '').replace(/^session-/, '');
+                const target = normalize(sessionId);
+                for (const workspace of registry.list()) {
+                  const ids = Array.isArray(workspace?.sessionIds) ? workspace.sessionIds : [];
+                  const hit = ids.find((raw) => normalize(raw) === target);
+                  if (hit !== undefined) await workspace.detachSession(hit);
+                }
+              },
+            }
+          : null,
       });
       ctx.effect(() => dispose);
     });

@@ -137,7 +137,14 @@ patch（`cordis.patch.yml`）插入一行插件条目，入口 `index.js` 导出
 3. **删完立刻收尾**。目录搬走等于“会话被删除”，Host 当场调一次
    `runtime.handleSessionsRemoved()`：释放租约 → 走统一闸门尝试释放引擎，
    不用等 watcher 下一个轮询周期。
-4. **路径只认 uuid**。`session-<id>` 的 id 必须是 uuid 形状，目标目录必须真的
+4. **导航页的索引也要摘**。宿主工作区索引（`storages/workspace.json` 的 `sessionIds`）
+   不会自己发现目录没了；不摘掉侧栏就会一直显示它、点进去报 `session/not-found`。
+   所以删除成功后还会：`workspace.detachSession(id)` + 删投影缓存
+   （`storages/session_projcache/sessions/session-<id>.json`）+ 让客户端
+   `sessions.refresh()` 与 `workspaces.refresh()`。
+5. **存量失效记录可以一键清**。`GET /sessions` 会附带 `orphans`（索引里有、磁盘上没有），
+   面板顶部显示「导航页还有 N 条失效记录」，点「清理失效记录」调 `POST /sessions/repair`。
+6. **路径只认 uuid**。`session-<id>` 的 id 必须是 uuid 形状，目标目录必须真的
    在 `sessions/` 根下，`../` 这类写法进不来。
 
 配置项：
@@ -155,6 +162,7 @@ patch（`cordis.patch.yml`）插入一行插件条目，入口 `index.js` 导出
 |---|---|---|
 | `GET` | `/lifecycle-cache/api/sessions` | 会话清单 + `minIdleMs`（不含绝对路径） |
 | `POST` | `/lifecycle-cache/api/sessions/delete` | `{ id, confirm: true, currentSessionId? }` |
+| `POST` | `/lifecycle-cache/api/sessions/repair` | 摘掉导航页里“索引有、目录没了”的失效记录 |
 
 ## 个性化（称呼 / 名字 / 风格 / 指令 / 人设）
 
@@ -324,7 +332,7 @@ Windows/Linux 采样器目前只有单元测试覆盖，没有真机显存断言
 ## 测试
 
 ```bash
-node --test               # 全部：209 项，207 pass / 2 skip
+node --test               # 全部：212 项，210 pass / 2 skip
 ```
 
 V1–V6 日志流水线，V7–V11 引擎释放与工作区记忆，S 系列压缩接缝，I 系列闸门不变量，
