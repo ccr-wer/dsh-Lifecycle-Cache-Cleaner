@@ -68,7 +68,7 @@ export function apply(ctx, config = {}) {
     const disposeSection = systemPrompt.section({
       name: 'plugin:lifecycle-memory',
       order: 9200,
-      text: '{{lifecycle_profile}}## 记忆\n\n{{lifecycle_memory}}',
+      text: '{{lifecycle_profile}}{{lifecycle_memory}}',
     });
     return () => {
       try {
@@ -115,14 +115,27 @@ export function apply(ctx, config = {}) {
     boot();
   }
 
-  // systemPrompt 是**可选服务**：只能通过 ctx.inject 拿到。
-  // 直接读 `ctx.systemPrompt` 会在未注入时抛
-  // `cannot get property "variable" without inject`——即使包在 try 里也没用，
-  // 因为取值本身就会抛。所以这里不碰属性，只在 inject 回调里用。
-  if (typeof ctx.inject === 'function') {
+  // systemPrompt 是**可选服务**。两条路都要走一遍：
+  //   1. 服务已经在了 —— `ctx.get()` 拿到（Cordis 的 Context 才有 get，纯对象假 ctx 没有）；
+  //   2. 还没上线 —— `ctx.inject(['systemPrompt'], …)` 等它。
+  // 只写第 2 条会踩坑：服务早在本插件激活前就绪时，单靠 inject 的等待语义不够可靠，
+  // 结果是 section 根本没注册、prompt 里什么都没有（实测：会话日志里查不到记忆段）。
+  // 直接读 `ctx.systemPrompt` 仍是不行的：未注入时取值本身就抛，包在 try 里也没用。
+  const attachPrompt = (systemPrompt, via) => {
+    runtime.diagnostics.push(`prompt: 已通过 ${via} 接上 systemPrompt`);
+    const dispose = wirePrompt(systemPrompt);
+    return () => {
+      runtime.diagnostics.push('prompt: systemPrompt 接入已断开');
+      dispose();
+    };
+  };
+
+  const directPrompt = typeof ctx.get === 'function' ? ctx.get('systemPrompt') : undefined;
+  if (directPrompt) {
+    ctx.effect(() => attachPrompt(directPrompt, 'ctx.get'));
+  } else if (typeof ctx.inject === 'function') {
     ctx.inject(['systemPrompt'], (systemPrompt) => {
-      const dispose = wirePrompt(systemPrompt);
-      ctx.effect(() => dispose);
+      ctx.effect(() => attachPrompt(systemPrompt, 'ctx.inject'));
     });
   } else {
     runtime.diagnostics.push('ctx.inject 不可用，跳过记忆注入');

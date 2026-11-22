@@ -405,6 +405,36 @@ GitHub 仓库名不改（本来就对）。
   表现是输入框里打字立刻被重置、按钮一直禁用、点保存没反应。修法是把文本函数放 `useRef`，
   `load`/`save` 的依赖里只留真正的状态。这个坑只有真机点一遍才会发现，`node --test` 测不出来。
 
+## D23. prompt 注入必须走 `ctx.get('systemPrompt')`，只靠 `ctx.inject` 是无效的
+
+**背景**：D22 上线后在真机验证时发现，模型完全看不到个性化设定。查会话日志
+（`<rootDir>/sessions/<ws>/session-<id>/session.v4.jsonl.zstd`，zstd 帧拼接）里的
+`system/message` 记录，**连 0.5.0 就"上线"的记忆注入都不在里面**——说明
+`systemPrompt.section()` 从来没注册成功，之前的 H7/H9 只证明了"假 ctx 下注册逻辑没问题"。
+
+**决策**：`apply()` 里两条路都走：
+
+1. `ctx.get('systemPrompt')` —— 服务已经就绪时直接拿（这是实际生效的那条）；
+2. 拿不到时才 `ctx.inject(['systemPrompt'], …)` 等它上线。
+
+并且把“走通了哪条路”写进 `runtime.diagnostics`，`lifecycle_cache_status` 能直接看到
+（`prompt: 已通过 ctx.get 接上 systemPrompt`）。
+
+**为什么**：`ctx.inject` 表达的是"等依赖可用再执行回调"。宿主里 system-prompt 往往
+在本插件激活之前就已就绪，此时单靠 inject 的等待语义没有触发回调（实测回调没跑，
+`diagnostics` 里连"缺少 variable/section"都没有——因为根本没进 `wirePrompt`）。
+`deliverable-file-references` 这类官方包是 `export const inject = ['systemPrompt']` 直接注册，
+也说明"必须在服务可用时立刻拿到它"这件事。
+
+**顺带修的**：没有记忆时不再输出空的 `## 记忆` 标题（标题移到变量渲染里，
+空则整段消失）。
+
+**验证方式（以后都用这个）**：解压会话日志里最新的 `system/message`，看里面有没有
+`## 用户设定的助手设定` 与 `## 记忆`。**光看 UI 或跑单元测试都不算验证。**
+
+**教训**：可选服务"注册成功"不等于"生效"。凡是往 prompt 里塞东西的改动，
+必须在真实会话日志里看到那段文本，否则就是自欺欺人。
+
 ## T11. 非 macOS 尚未做过真机显存断言
 
 采样器补齐后，Windows/Linux 的解析逻辑有单元测试覆盖，但**没有在真机上验证过“删除会话 -> 显存真的掉下来”**。V2/V2b 在非 macOS 上 skip，这是目前唯一跑过真实下降断言的平台。
