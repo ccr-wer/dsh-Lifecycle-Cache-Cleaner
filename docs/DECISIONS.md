@@ -299,6 +299,45 @@ GitHub 仓库名不改（本来就对）。
 
 ---
 
+## D20. 插件页 UI：同源只读 HTTP，而不是 Remote
+
+**背景**：Host 半边（工具 / 记忆注入 / 删除监听）已经能用，但人在界面里看不到状态。
+要补的是“一行状态 + 一个释放按钮”。
+
+**决策**：
+
+1. **不做 Remote**。读 `@deepseek-ai/dsh-api-remotes` 的 README 与源码确认：Remote 能力集合是
+   **构建期**由显式 value import 固定的（“the Client does not discover the Host's active
+   Services or Remote definitions at runtime”），第三方组合包无法在运行时加一个
+   `remote.lifecycleCache` 命名空间。能用的第三方路径只有宿主本就暴露的 HTTP 面。
+2. **同源只读 HTTP 面**。Host 用 `ctx.webServer.register({ kind: 'prefix', path: '/lifecycle-cache/api' })`
+   注册两条路由：`GET /status` 投影 `runtime.status()`，`POST /clean` 转 `runtime.clean()`。
+   `dsh-session-manager` 的 `/session-manager/api` 验证过这条路可行。
+3. **认证复用宿主 Connection**。每个请求先 `connection.admit(req)`，只要 `principal.kind === 'owner'`；
+   `connection` 缺席时回 503（fail-closed），不是“谁都能点”。
+4. **闸门只有一份**。浏览器不算 `proceed`：按钮的 `disabled` 直接来自 `gate.proceed`，
+   点击只提交 `{ confirm: true }`，判定仍然只发生在 `lib/core/release-gate.js`。
+   释放返回 `released: false` 就照实显示 code，不伪造“已释放”。
+5. **卡片注册进 `plugins.bundle.config`**（key = 包名）。读 `dsh-client-ui-plugin-manager`
+   的 `slot-contract.ts` 确认：这个 keyed slot 只以 `view: 'page'` 渲染在
+   **本包的插件页**上，正好是“插件页能看到状态行”要的位置；`summary` 只回一行文本。
+6. **不发本机路径**。`publicStatus()` 只投影 engine / gate / memory / 会话监听 / 最近一次删除，
+   `rootDir`、`workspaceId`、`diagnostics` 一概不给浏览器。
+7. **不做删除入口**。删除仍归宿主 / `dsh-session-manager`；Client 不碰 `sessions/`。
+
+**代价与已知边界**：
+
+- 同源 HTTP 是宿主实现细节。将来宿主如果给第三方开 Remote，这里应迁移；迁移只影响
+  `client.js` 与 `lib/host/web-api.js` 两个文件。
+- Electron 壳把 fetch 走 IPC 桥（`dsh-host-webserver` README），这条路**只在 Web 页面验证过**，
+  桌面壳里未验证。
+- 可选服务用 `ctx.inject(['webServer', 'connection'], …)` 接入；但 `ctx.inject` 只在真正的
+  Cordis Context 上有意义，纯对象假 ctx（测试）没有 `ctx.get`。所以注册第二个 inject 前先看
+  `typeof ctx.get === 'function'`——既有 H9 断言（`inject` 调用序列只能是 `['systemPrompt']`）
+  因此一字未改，代价是这条分支写得比理想状态啰嗦。
+- `node --test` 只能证明接线、投影与拒绝路径；卡片是不是真的长在插件页上、图标与中英文标题
+  是否正常，必须在装好的页面里看。发布说明里不许拿 U/C 系列冒充界面验收。
+
 ## T11. 非 macOS 尚未做过真机显存断言
 
 采样器补齐后，Windows/Linux 的解析逻辑有单元测试覆盖，但**没有在真机上验证过“删除会话 -> 显存真的掉下来”**。V2/V2b 在非 macOS 上 skip，这是目前唯一跑过真实下降断言的平台。

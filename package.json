@@ -1,12 +1,13 @@
 {
   "name": "dsh-lifecycle-cache-cleaner",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "DSH 本地 Agent 的 KV cache 生命周期管理：溢出闸门 + 工作日志固化 + 统一清理闸门（探测不到部署就不清理）+ 工作区记忆孤儿归档",
   "type": "module",
   "main": "index.js",
   "icon": "./icon.svg",
   "exports": {
     ".": "./index.js",
+    "./client": "./client.js",
     "./cleaner.js": "./cleaner.js",
     "./session-deleter.js": "./session-deleter.js",
     "./overflow-guard.js": "./overflow-guard.js",
@@ -23,6 +24,13 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-plugin-manager"
+      ]
     }
   },
   "engines": {
@@ -30,6 +38,7 @@
   },
   "files": [
     "index.js",
+    "client.js",
     "cordis.patch.yml",
     "icon.svg",
     "locale/*.json",
