@@ -48,11 +48,12 @@ function makeRes() {
 
 const owner = () => ({ admit: () => ({ peer: { principal: { kind: 'owner' } } }) });
 
-function captureRoute(runtime) {
+function captureRoute(runtime, extra = {}) {
   const routes = [];
   registerWebApi({
     runtime,
     connection: owner(),
+    ...extra,
     webServer: {
       register(route) {
         routes.push(route);
@@ -69,7 +70,7 @@ async function call(route, req) {
   return res;
 }
 
-test('Y1 GET /memory 返回两层条目、文档与预算', async () => {
+test('Y1 GET /memory 返回共享组、工作区组与预算', async () => {
   const { runtime } = makeRuntime();
   runtime.memory.addUserEntry({ scope: 'shared', text: '共享的一条' });
   runtime.memory.addUserEntry({ scope: 'workspace', workspaceId: 'ws-mem', text: '工作区的一条' });
@@ -78,12 +79,32 @@ test('Y1 GET /memory 返回两层条目、文档与预算', async () => {
   const res = await call(route, makeReq());
   assert.equal(res.statusCode, 200);
   const body = res.json().result;
-  assert.equal(body.workspaceId, 'ws-mem');
-  assert.equal(body.shared.length, 1);
-  assert.equal(body.workspace.length, 1);
-  assert.equal(body.shared[0].author, 'user');
-  assert.equal(body.doc, '');
+  assert.equal(body.shared.entries.length, 1);
+  assert.equal(body.shared.pending.length, 0);
+  assert.equal(body.workspaces.length, 1);
+  const group = body.workspaces[0];
+  assert.equal(group.id, 'ws-mem');
+  assert.equal(group.label, 'ws-mem');
+  assert.equal(group.entries.length, 1);
+  assert.equal(group.entries[0].author, 'user');
+  assert.equal(group.doc, '');
   assert.equal(body.budget.sharedBytes, 1024);
+});
+
+test('Y1b 宿主登记的工作区即使还没有记忆，也会自动成组', async () => {
+  const { runtime } = makeRuntime();
+  const route = captureRoute(runtime, {
+    listWorkspaces: () => [
+      { id: 'w1', path: 'C:\\proj\\alpha', title: 'Alpha' },
+      { id: 'w2', path: 'C:\\proj\\beta' },
+    ],
+  });
+
+  const body = (await call(route, makeReq())).json().result;
+  const ids = body.workspaces.map((group) => group.id).sort();
+  assert.deepEqual(ids, ['C:\\proj\\alpha', 'C:\\proj\\beta']);
+  assert.equal(body.workspaces.find((g) => g.id === 'C:\\proj\\alpha').label, 'alpha');
+  assert.equal(body.workspaces.find((g) => g.id === 'C:\\proj\\alpha').title, 'Alpha');
 });
 
 test('Y2 POST /memory/entry 分别写两层，并回条目', async () => {
@@ -184,4 +205,55 @@ test('Y6 POST /memory/doc/archive 需要 confirm，归档后文档为空', async
   assert.equal(archived.statusCode, 200);
   assert.equal(runtime.docs.read('ws-mem'), '');
   assert.equal(runtime.docs.listArchives('ws-mem').length, 1);
+});
+
+test('Y7 提议出现在对应组里；接受后才写进记忆，拒绝则丢弃', async () => {
+  const { runtime } = makeRuntime();
+  runtime.proposals.add({ text: '共享的提议', scope: 'shared', reason: '跨仓库通用' });
+  runtime.proposals.add({ text: '工作区的提议', scope: 'workspace', workspaceId: 'ws-mem' });
+  const route = captureRoute(runtime);
+
+  const before = (await call(route, makeReq())).json().result;
+  assert.equal(before.pendingCount, 2);
+  assert.equal(before.shared.pending.length, 1);
+  assert.equal(before.workspaces.find((g) => g.id === 'ws-mem').pending.length, 1);
+  assert.equal(runtime.memory.list({ scope: 'shared' }).length, 0, '接受前不落库');
+
+  const accepted = await call(
+    route,
+    makeReq({ method: 'POST', url: `${ROUTE_BASE}/memory/pending/accept`, body: JSON.stringify({ id: before.shared.pending[0].id }) }),
+  );
+  assert.equal(accepted.statusCode, 200);
+  assert.equal(runtime.memory.list({ scope: 'shared' }).length, 1);
+  assert.equal(runtime.proposals.list().length, 1);
+
+  const rejected = await call(
+    route,
+    makeReq({
+      method: 'POST',
+      url: `${ROUTE_BASE}/memory/pending/reject`,
+      body: JSON.stringify({ id: runtime.proposals.list()[0].id }),
+    }),
+  );
+  assert.equal(rejected.statusCode, 200);
+  assert.equal(runtime.proposals.list().length, 0);
+  assert.equal(runtime.memory.list({ scope: 'workspace', workspaceId: 'ws-mem' }).length, 0, '拒绝的不写');
+});
+
+test('Y8 条目可以按 UI 指定的 workspaceId 写入指定工作区', async () => {
+  const { runtime } = makeRuntime();
+  const route = captureRoute(runtime);
+
+  const res = await call(
+    route,
+    makeReq({
+      method: 'POST',
+      url: `${ROUTE_BASE}/memory/entry`,
+      body: JSON.stringify({ scope: 'workspace', workspaceId: 'C:\\proj\\alpha', text: '这个仓库用 pnpm' }),
+    }),
+  );
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.json().result.entry.workspaceId, 'C:\\proj\\alpha');
+  assert.equal(runtime.memory.list({ scope: 'workspace', workspaceId: 'C:\\proj\\alpha' }).length, 1);
+  assert.equal(runtime.memory.list({ scope: 'workspace', workspaceId: 'ws-mem' }).length, 0);
 });

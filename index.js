@@ -19,7 +19,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { HostRuntime } from './lib/host/runtime.js';
-import { createStatusTool, createCleanTool } from './lib/host/tools.js';
+import { createStatusTool, createCleanTool, createProposeMemoryTool } from './lib/host/tools.js';
 import { SessionWatcher } from './lib/host/session-watcher.js';
 import { registerWebApi } from './lib/host/web-api.js';
 import { createEngineAdapter } from './adapters/engine-http.js';
@@ -45,6 +45,7 @@ export function apply(ctx, config = {}) {
     const disposers = [];
     disposers.push(ctx.tools.register(createStatusTool(runtime)));
     disposers.push(ctx.tools.register(createCleanTool(runtime)));
+    disposers.push(ctx.tools.register(createProposeMemoryTool(runtime)));
     return () => {
       for (const d of disposers.reverse()) {
         try {
@@ -147,6 +148,24 @@ export function apply(ctx, config = {}) {
   // 免得既有测试的 inject 调用序列被改变。
   if (typeof ctx.inject === 'function' && typeof ctx.get === 'function') {
     ctx.inject(['webServer', 'connection'], (webCtx) => {
+      // 工作区列表来自宿主 registry（可选服务）。拿不到就只显示已有记忆里的工作区。
+      const registry = ctx.get('workspaceRegistry');
+      const listWorkspaces = () => {
+        if (!registry || typeof registry.list !== 'function') return [];
+        try {
+          return registry
+            .list()
+            .map((workspace) => ({
+              id: workspace?.id,
+              path: workspace?.path ?? workspace?.id,
+              title: workspace?.title ?? workspace?.name ?? '',
+            }))
+            .filter((workspace) => typeof workspace.path === 'string' && workspace.path !== '');
+        } catch (err) {
+          runtime.diagnostics.push(`workspaceRegistry.list: ${err?.message ?? err}`);
+          return [];
+        }
+      };
       const dispose = registerWebApi({
         runtime,
         webServer: webCtx.webServer,
@@ -155,6 +174,7 @@ export function apply(ctx, config = {}) {
         trashDir: path.join(runtime.rootDir, 'lifecycle-cache', 'trash'),
         minIdleMs: config.sessionDeleteMinIdleMs ?? 120000,
         profileStore: runtime.profiles,
+        listWorkspaces,
       });
       ctx.effect(() => dispose);
     });

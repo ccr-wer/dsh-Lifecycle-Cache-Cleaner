@@ -58,7 +58,7 @@ test('H1 apply 注册两个工具并保持定义可注册', () => {
   const { ctx, tools } = makeCtx();
   apply(ctx, { rootDir: tmpRoot(), engine: { kind: 'none' } });
 
-  assert.deepEqual([...tools.keys()].sort(), ['lifecycle_cache_clean', 'lifecycle_cache_status']);
+  assert.deepEqual([...tools.keys()].sort(), ['lifecycle_cache_clean', 'lifecycle_cache_status', 'lifecycle_memory_propose']);
   for (const def of tools.values()) {
     assert.equal(typeof def.execute, 'function');
     assert.equal(typeof def.output.render, 'function');
@@ -163,7 +163,7 @@ test('H9 提供 ctx.inject 时走可选服务路径，避免重复注册 section
   apply(ctx, { rootDir, workspaceId: 'ws-h9', engine: { kind: 'none' } });
 
   assert.deepEqual(injectCalls, ['systemPrompt']);
-  assert.equal(tools.size, 2);
+  assert.equal(tools.size, 3);
   assert.equal(sections.length, 1, 'section 只能注册一次');
   assert.ok(variables.has('lifecycle_memory'));
 });
@@ -184,7 +184,7 @@ test('H10 未注入时读取 ctx.systemPrompt 不得被触发（重现 cannot ge
   });
 
   assert.doesNotThrow(() => apply(ctx, { rootDir: tmpRoot(), engine: { kind: 'none' } }));
-  assert.deepEqual(seen.sort(), ['lifecycle_cache_clean', 'lifecycle_cache_status']);
+  assert.deepEqual(seen.sort(), ['lifecycle_cache_clean', 'lifecycle_cache_status', 'lifecycle_memory_propose']);
 });
 
 test('H11 ctx.inject 存在但服务缺席时，不注册 section 也不抛', () => {
@@ -192,7 +192,7 @@ test('H11 ctx.inject 存在但服务缺席时，不注册 section 也不抛', ()
   ctx.inject = () => {}; // 服务永远不出现
 
   assert.doesNotThrow(() => apply(ctx, { rootDir: tmpRoot(), engine: { kind: 'none' } }));
-  assert.equal(tools.size, 2);
+  assert.equal(tools.size, 3);
   assert.equal(sections.length, 0);
 });
 
@@ -280,5 +280,5 @@ test('H16 status 显示会话监听状态', async () => {
 test('H8 没有 systemPrompt 服务时不抛错，且记录诊断', () => {
   const { ctx, tools } = makeCtx({ withPrompt: false });
   assert.doesNotThrow(() => apply(ctx, { rootDir: tmpRoot(), engine: { kind: 'none' } }));
-  assert.equal(tools.size, 2);
+  assert.equal(tools.size, 3);
 });

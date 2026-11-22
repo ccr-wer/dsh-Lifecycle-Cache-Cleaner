@@ -120,6 +120,16 @@ window.__ModuleLoader__.load({
       'memory.archiveConfirm': '确认归档',
       'memory.archived': '已归档（移到 memory/.archive，可人工恢复）。',
       'memory.workspace': '工作区：{key}',
+      'memory.sharedTitle': '共享记忆（所有工作区共享）',
+      'memory.proposed': '模型建议写入（等你确认）',
+      'memory.accept': '接受',
+      'memory.reject': '拒绝',
+      'memory.accepted': '已接受，写进记忆。',
+      'memory.rejected': '已拒绝，未写入。',
+      'memory.reason': '理由：{reason}',
+      'memory.group_entries': '{n} 条',
+      'memory.pending': '{n} 条待确认',
+      'memory.current': '当前',
     };
 
     const en = {
@@ -218,6 +228,16 @@ window.__ModuleLoader__.load({
       'memory.archiveConfirm': 'Confirm archive',
       'memory.archived': 'Archived to memory/.archive (recoverable by hand).',
       'memory.workspace': 'Workspace: {key}',
+      'memory.sharedTitle': 'Shared memory (every workspace)',
+      'memory.proposed': 'Proposed by the model (waiting for you)',
+      'memory.accept': 'Accept',
+      'memory.reject': 'Reject',
+      'memory.accepted': 'Accepted and stored.',
+      'memory.rejected': 'Rejected, nothing stored.',
+      'memory.reason': 'Why: {reason}',
+      'memory.group_entries': '{n} entries',
+      'memory.pending': '{n} pending',
+      'memory.current': 'Current',
     };
 
     const CSS = [
@@ -291,6 +311,19 @@ window.__ModuleLoader__.load({
       '.lc-tag{display:inline-block;margin-left:6px;padding:0 5px;border-radius:4px;font-size:10px;line-height:15px;',
       'border:1px solid var(--dsw-alias-border-l2,#ccc);color:var(--dsw-alias-label-tertiary,#777)}',
       '.lc-add{display:flex;flex-direction:column;gap:6px;padding:8px 0 4px}',
+      // 按工作区分组的折叠列表
+      '.lc-group{border:1px solid var(--dsw-alias-border-l2,#ddd);border-radius:8px;margin:6px 0;overflow:hidden}',
+      '.lc-groupHead{box-sizing:border-box;display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;',
+      'border:none;background:transparent;color:var(--dsw-alias-label-primary,#111);font-size:13px;text-align:left;cursor:pointer}',
+      '.lc-groupHead:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.05))}',
+      '.lc-caret{width:14px;color:var(--dsw-alias-label-tertiary,#888)}',
+      '.lc-groupLabel{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:52%}',
+      '.lc-groupMeta{margin-left:auto;font-size:11px;color:var(--dsw-alias-label-tertiary,#888)}',
+      '.lc-badge{display:inline-block;padding:0 5px;border-radius:4px;font-size:10px;line-height:15px;',
+      'border:1px solid var(--dsw-alias-border-l2,#ccc);color:var(--dsw-alias-label-tertiary,#777)}',
+      '.lc-badgeWarn{border-color:var(--dsw-alias-state-warning-primary,#b7791f);color:var(--dsw-alias-state-warning-primary,#b7791f)}',
+      '.lc-groupBody{padding:4px 10px 10px;border-top:1px solid var(--dsw-alias-border-l2,#eee)}',
+      '.lc-proposal{background:var(--dsw-alias-fill-l1,rgba(0,0,0,.03));border-radius:6px;padding:6px 8px;margin:4px 0}',
     ].join('');
 
     /** 只替换 `{name}`；locale 服务自身通常也会插值，这里兜底。 */
@@ -983,27 +1016,30 @@ window.__ModuleLoader__.load({
     // ------------------------------------------------------------ 记忆面板
 
     /**
-     * 共享记忆 / 工作区记忆的编辑面板。
+     * 记忆面板 v2：按“共享 + 每个工作区一组”的折叠列表管理。
      *
-     * 与「个性化」的区别：记忆是条目化的（去重、取代、冲突都有规则），
-     * 这里只是把**用户**这条写入路径接通：条目写入走 `addUserEntry`（归属听用户的），
-     * 工作区整段文档走 `WorkspaceMemoryStore.write`（同样要求 confirmed）。
-     * 模型的写入口没有变化，仍然只有 `propose`。
+     * 数据来自 `GET /memory`：工作区列表由宿主的 workspaceRegistry 提供，
+     * 新建项目被宿主登记后，这里会自动多出一组——不需要用户手动“创建记忆”。
+     *
+     * 三条写入路径都在这里收口：
+     *   1. 用户加条目（归属 = 所在组）；
+     *   2. 用户改整段工作区文档（保存 / 归档）；
+     *   3. 模型提议的条目（`lifecycle_memory_propose` 排队）→ 用户接受或拒绝才落库。
      */
     function MemoryPanel(props) {
       const textRef = React.useRef(null);
       textRef.current = makeText(props);
       const t = textRef.current;
       const [open, setOpen] = React.useState(false);
-      const [tab, setTab] = React.useState('shared');
       const [data, setData] = React.useState(null);
       const [phase, setPhase] = React.useState('idle');
-      const [entryDraft, setEntryDraft] = React.useState('');
-      const [docDraft, setDocDraft] = React.useState('');
-      const [busy, setBusy] = React.useState(false);
       const [notice, setNotice] = React.useState(null);
+      const [busy, setBusy] = React.useState(false);
+      const [expanded, setExpanded] = React.useState({ shared: true });
+      const [drafts, setDrafts] = React.useState({});
+      const [composers, setComposers] = React.useState({});
       const [pendingId, setPendingId] = React.useState(null);
-      const [archivePending, setArchivePending] = React.useState(false);
+      const [archivePending, setArchivePending] = React.useState(null);
       const alive = React.useRef(true);
 
       React.useEffect(() => {
@@ -1019,7 +1055,9 @@ window.__ModuleLoader__.load({
           const result = await request('GET', '/memory');
           if (!alive.current) return;
           setData(result);
-          setDocDraft(result?.doc ?? '');
+          const nextDrafts = {};
+          for (const group of result?.workspaces ?? []) nextDrafts[group.id] = group.doc ?? '';
+          setDrafts(nextDrafts);
           setPhase('ready');
         } catch (error) {
           if (alive.current) {
@@ -1039,29 +1077,36 @@ window.__ModuleLoader__.load({
         return () => document.removeEventListener('keydown', onKey);
       }, [open, load]);
 
-      /** 统一的“执行 → 提示 → 重读”包装，避免每个动作写一遍 try/catch。 */
-      const act = React.useCallback(async (work, okText) => {
-        setBusy(true);
-        setNotice(null);
-        try {
-          const message = await work();
-          if (alive.current) setNotice({ ok: true, text: okText ?? message ?? textRef.current('memory.saved') });
-          await load();
-        } catch (error) {
-          if (alive.current) {
-            setNotice({ ok: false, text: textRef.current('memory.error', { message: messageOf(error) }) });
+      const act = React.useCallback(
+        async (work, okText) => {
+          setBusy(true);
+          setNotice(null);
+          try {
+            const message = await work();
+            if (alive.current) setNotice({ ok: true, text: okText ?? message ?? textRef.current('memory.saved') });
+            await load();
+          } catch (error) {
+            if (alive.current) {
+              setNotice({ ok: false, text: textRef.current('memory.error', { message: messageOf(error) }) });
+            }
+          } finally {
+            if (alive.current) setBusy(false);
           }
-        } finally {
-          if (alive.current) setBusy(false);
-        }
-      }, [load]);
+        },
+        [load],
+      );
 
-      const addEntry = () =>
+      const toggle = (id) => setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+
+      const setComposer = (id, value) => setComposers((prev) => ({ ...prev, [id]: value }));
+      const setDraft = (id, value) => setDrafts((prev) => ({ ...prev, [id]: value }));
+
+      const addEntry = (groupId, scope) =>
         act(async () => {
-          const text = entryDraft.trim();
+          const text = String(composers[groupId] ?? '').trim();
           if (!text) throw new Error('内容不能为空');
-          await request('POST', '/memory/entry', { scope: tab, text });
-          if (alive.current) setEntryDraft('');
+          await request('POST', '/memory/entry', scope === 'shared' ? { scope, text } : { scope, workspaceId: groupId, text });
+          if (alive.current) setComposer(groupId, '');
         });
 
       const removeEntry = (id) =>
@@ -1070,24 +1115,35 @@ window.__ModuleLoader__.load({
           if (alive.current) setPendingId(null);
         });
 
-      const saveDoc = () =>
+      const saveDoc = (groupId) =>
         act(async () => {
-          await request('PUT', '/memory/doc', { text: docDraft });
+          await request('PUT', '/memory/doc', { workspaceId: groupId, text: drafts[groupId] ?? '' });
         });
 
-      const archiveDoc = () =>
+      const archiveDoc = (groupId) =>
         act(async () => {
-          await request('POST', '/memory/doc/archive', { confirm: true });
-          if (alive.current) setArchivePending(false);
+          await request('POST', '/memory/doc/archive', { workspaceId: groupId, confirm: true });
+          if (alive.current) {
+            setArchivePending(null);
+            setDraft(groupId, '');
+          }
         }, t('memory.archived'));
+
+      const acceptProposal = (item) =>
+        act(async () => {
+          await request('POST', '/memory/pending/accept', { id: item.id });
+        }, t('memory.accepted'));
+
+      const rejectProposal = (item) =>
+        act(async () => {
+          await request('POST', '/memory/pending/reject', { id: item.id });
+        }, t('memory.rejected'));
 
       const authorLabel = (author) => {
         if (author === 'user') return t('memory.author.user');
         if (author === 'promoted') return t('memory.author.promoted');
         return t('memory.author.model');
       };
-
-      const entries = data ? (tab === 'shared' ? data.shared : data.workspace) : [];
 
       const entryRow = (entry) => {
         const pending = pendingId === entry.id;
@@ -1100,7 +1156,7 @@ window.__ModuleLoader__.load({
           .join(' · ');
         return h(
           'div',
-          { className: 'lc-entry', key: entry.id, 'data-lc-entry': entry.id },
+          { className: 'lc-entry', key: entry.id },
           h(
             'div',
             { className: 'lc-rowMain' },
@@ -1113,13 +1169,7 @@ window.__ModuleLoader__.load({
             pending
               ? h(
                   'button',
-                  {
-                    type: 'button',
-                    className: 'lc-btn lc-danger',
-                    disabled: busy,
-                    onClick: () => void removeEntry(entry.id),
-                    'data-lc-action': 'confirm-remove-entry',
-                  },
+                  { type: 'button', className: 'lc-btn lc-danger', disabled: busy, onClick: () => void removeEntry(entry.id) },
                   t('memory.confirmDelete'),
                 )
               : h(
@@ -1132,7 +1182,6 @@ window.__ModuleLoader__.load({
                       setPendingId(entry.id);
                       setNotice(null);
                     },
-                    'data-lc-action': 'remove-entry',
                   },
                   t('memory.delete'),
                 ),
@@ -1143,63 +1192,154 @@ window.__ModuleLoader__.load({
         );
       };
 
-      const docEditor =
-        tab !== 'workspace'
-          ? null
-          : h(
+      const proposalRow = (item) => {
+        const meta = [
+          item.scope === 'shared' ? t('memory.tab.shared') : t('memory.tab.workspace'),
+          item.reason ? t('memory.reason', { reason: item.reason }) : null,
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        return h(
+          'div',
+          { className: 'lc-entry lc-proposal', key: `pending-${item.id}` },
+          h(
+            'div',
+            { className: 'lc-rowMain' },
+            h('div', { className: 'lc-entryText' }, item.text),
+            h('div', { className: 'lc-entryMeta' }, meta),
+          ),
+          h(
+            'div',
+            { className: 'lc-rowActions' },
+            h(
+              'button',
+              { type: 'button', className: 'lc-btn lc-primary', disabled: busy, onClick: () => void acceptProposal(item) },
+              t('memory.accept'),
+            ),
+            h('button', { type: 'button', className: 'lc-btn', disabled: busy, onClick: () => void rejectProposal(item) }, t('memory.reject')),
+          ),
+        );
+      };
+
+      const composer = (groupId, scope) =>
+        h(
+          'div',
+          { className: 'lc-add' },
+          h('textarea', {
+            className: 'lc-textarea',
+            value: composers[groupId] ?? '',
+            placeholder: t('memory.addPlaceholder'),
+            onChange: (event) => setComposer(groupId, event && event.target ? event.target.value : ''),
+            'data-lc-field': `memory-entry-${groupId}`,
+            style: { minHeight: '48px' },
+          }),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'lc-btn',
+              disabled: busy || String(composers[groupId] ?? '').trim() === '',
+              onClick: () => void addEntry(groupId, scope),
+            },
+            t('memory.add'),
+          ),
+        );
+
+      const groupHead = (key, label, counts, isCurrent) =>
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'lc-groupHead',
+            onClick: () => toggle(key),
+            'aria-expanded': expanded[key] === true ? 'true' : 'false',
+            'data-lc-group': key,
+          },
+          h('span', { className: 'lc-caret' }, expanded[key] ? '▾' : '▸'),
+          h('span', { className: 'lc-groupLabel' }, label),
+          isCurrent ? h('span', { className: 'lc-badge' }, t('memory.current')) : null,
+          counts.pending > 0 ? h('span', { className: 'lc-badge lc-badgeWarn' }, t('memory.pending', { n: counts.pending })) : null,
+          h('span', { className: 'lc-groupMeta' }, t('memory.group_entries', { n: counts.entries })),
+        );
+
+      const sharedPending = data?.shared?.pending ?? [];
+      const sharedEntries = data?.shared?.entries ?? [];
+
+      const sharedBlock = h(
+        'div',
+        { className: 'lc-group', key: 'shared' },
+        groupHead('shared', t('memory.sharedTitle'), { entries: sharedEntries.length, pending: sharedPending.length }, false),
+        expanded.shared
+          ? h(
               'div',
-              { className: 'lc-form' },
-              h('span', { className: 'lc-label' }, t('memory.docLabel')),
-              h('textarea', {
-                className: 'lc-textarea',
-                value: docDraft,
-                placeholder: t('memory.docPlaceholder'),
-                onChange: (event) => setDocDraft(event && event.target ? event.target.value : ''),
-                'data-lc-field': 'memory-doc',
-                style: { minHeight: '120px' },
-              }),
-              h(
+              { className: 'lc-groupBody' },
+              composer('shared', 'shared'),
+              sharedPending.length > 0
+                ? h('div', null, h('div', { className: 'lc-groupTitle' }, t('memory.proposed')), sharedPending.map(proposalRow))
+                : null,
+              sharedEntries.length === 0 ? h('p', { className: 'lc-status' }, t('memory.sharedEmpty')) : sharedEntries.map(entryRow),
+            )
+          : null,
+      );
+
+      const workspaceBlocks = (data?.workspaces ?? []).map((group) => {
+        const isCurrent = String(group.id) === String(data?.workspaceId ?? '');
+        const open = expanded[group.id] === true;
+        return h(
+          'div',
+          { className: 'lc-group', key: group.id },
+          groupHead(group.id, group.label || group.id, { entries: group.entries.length, pending: group.pending.length }, isCurrent),
+          open
+            ? h(
                 'div',
-                { className: 'lc-formActions' },
-                h(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'lc-btn lc-primary',
-                    disabled: busy,
-                    onClick: () => void saveDoc(),
-                    'data-lc-action': 'save-doc',
-                  },
-                  t('memory.docSave'),
-                ),
-                archivePending
-                  ? h(
+                { className: 'lc-groupBody' },
+                h('div', { className: 'lc-form' },
+                  h('span', { className: 'lc-label' }, t('memory.docLabel')),
+                  h('div', { className: 'lc-formHint', title: group.title || group.id }, group.id),
+                  h('textarea', {
+                    className: 'lc-textarea',
+                    value: drafts[group.id] ?? '',
+                    placeholder: t('memory.docPlaceholder'),
+                    onChange: (event) => setDraft(group.id, event && event.target ? event.target.value : ''),
+                    'data-lc-field': `memory-doc-${group.id}`,
+                    style: { minHeight: '96px' },
+                  }),
+                  h(
+                    'div',
+                    { className: 'lc-formActions' },
+                    h(
                       'button',
-                      {
-                        type: 'button',
-                        className: 'lc-btn lc-danger',
-                        disabled: busy,
-                        onClick: () => void archiveDoc(),
-                        'data-lc-action': 'confirm-archive-doc',
-                      },
-                      t('memory.archiveConfirm'),
-                    )
-                  : h(
-                      'button',
-                      {
-                        type: 'button',
-                        className: 'lc-btn',
-                        disabled: busy,
-                        onClick: () => setArchivePending(true),
-                        'data-lc-action': 'archive-doc',
-                      },
-                      t('memory.archive'),
+                      { type: 'button', className: 'lc-btn lc-primary', disabled: busy, onClick: () => void saveDoc(group.id) },
+                      t('memory.docSave'),
                     ),
-                archivePending
-                  ? h('button', { type: 'button', className: 'lc-btn', disabled: busy, onClick: () => setArchivePending(false) }, t('memory.cancel'))
+                    archivePending === group.id
+                      ? h(
+                          'button',
+                          { type: 'button', className: 'lc-btn lc-danger', disabled: busy, onClick: () => void archiveDoc(group.id) },
+                          t('memory.archiveConfirm'),
+                        )
+                      : h(
+                          'button',
+                          { type: 'button', className: 'lc-btn', disabled: busy, onClick: () => setArchivePending(group.id) },
+                          t('memory.archive'),
+                        ),
+                    archivePending === group.id
+                      ? h('button', { type: 'button', className: 'lc-btn', disabled: busy, onClick: () => setArchivePending(null) }, t('memory.cancel'))
+                      : null,
+                    group.docBytes ? h('span', { className: 'lc-formHint' }, `${group.docBytes} B`) : null,
+                  ),
+                ),
+                composer(group.id, 'workspace'),
+                group.pending.length > 0
+                  ? h('div', null, h('div', { className: 'lc-groupTitle' }, t('memory.proposed')), group.pending.map(proposalRow))
                   : null,
-              ),
-            );
+                group.entries.length === 0
+                  ? h('p', { className: 'lc-status' }, t('memory.workspaceEmpty'))
+                  : group.entries.map(entryRow),
+              )
+            : null,
+        );
+      });
 
       const dialog = !open
         ? null
@@ -1219,14 +1359,13 @@ window.__ModuleLoader__.load({
                 'div',
                 { className: 'lc-dialogHead' },
                 h('span', { className: 'lc-title' }, t('memory.title')),
+                data && data.pendingCount > 0
+                  ? h('span', { className: 'lc-badge lc-badgeWarn' }, t('memory.pending', { n: data.pendingCount }))
+                  : null,
                 h(
                   'span',
                   { className: 'lc-actions' },
-                  h(
-                    'button',
-                    { type: 'button', className: 'lc-btn', onClick: () => void load(), disabled: busy || phase === 'loading' },
-                    t('panel.refresh'),
-                  ),
+                  h('button', { type: 'button', className: 'lc-btn', onClick: () => void load(), disabled: busy || phase === 'loading' }, t('panel.refresh')),
                   h('button', { type: 'button', className: 'lc-btn', onClick: () => setOpen(false) }, t('panel.close')),
                 ),
               ),
@@ -1235,75 +1374,11 @@ window.__ModuleLoader__.load({
                 { className: 'lc-dialogBody' },
                 h('p', { className: 'lc-hint' }, t('memory.hint')),
                 data
-                  ? h(
-                      'p',
-                      { className: 'lc-formHint' },
-                      [
-                        t('memory.workspace', { key: String(data.workspaceId ?? '').split(/[\\/]/).pop() || '—' }),
-                        t('memory.budget', { shared: data.budget?.sharedBytes ?? 0, workspace: data.budget?.workspaceBytes ?? 0 }),
-                      ].join(' · '),
-                    )
+                  ? h('p', { className: 'lc-formHint' }, t('memory.budget', { shared: data.budget?.sharedBytes ?? 0, workspace: data.budget?.workspaceBytes ?? 0 }))
                   : null,
-                notice
-                  ? h(
-                      'p',
-                      { className: `lc-status ${notice.ok ? 'lc-statusOk' : 'lc-statusError'}`, role: 'status' },
-                      notice.text,
-                    )
-                  : null,
-                h(
-                  'div',
-                  { className: 'lc-tabs' },
-                  h(
-                    'button',
-                    {
-                      type: 'button',
-                      className: tab === 'shared' ? 'lc-tab lc-tabActive' : 'lc-tab',
-                      onClick: () => setTab('shared'),
-                      'data-lc-action': 'tab-shared',
-                    },
-                    t('memory.tab.shared'),
-                  ),
-                  h(
-                    'button',
-                    {
-                      type: 'button',
-                      className: tab === 'workspace' ? 'lc-tab lc-tabActive' : 'lc-tab',
-                      onClick: () => setTab('workspace'),
-                      'data-lc-action': 'tab-workspace',
-                    },
-                    t('memory.tab.workspace'),
-                  ),
-                ),
-                docEditor,
-                h(
-                  'div',
-                  { className: 'lc-add' },
-                  h('textarea', {
-                    className: 'lc-textarea',
-                    value: entryDraft,
-                    placeholder: t('memory.addPlaceholder'),
-                    onChange: (event) => setEntryDraft(event && event.target ? event.target.value : ''),
-                    'data-lc-field': 'memory-entry',
-                    style: { minHeight: '56px' },
-                  }),
-                  h(
-                    'button',
-                    {
-                      type: 'button',
-                      className: 'lc-btn',
-                      disabled: busy || entryDraft.trim() === '',
-                      onClick: () => void addEntry(),
-                      'data-lc-action': 'add-entry',
-                    },
-                    t('memory.add'),
-                  ),
-                ),
+                notice ? h('p', { className: `lc-status ${notice.ok ? 'lc-statusOk' : 'lc-statusError'}`, role: 'status' }, notice.text) : null,
                 phase === 'loading' ? h('p', { className: 'lc-status' }, t('panel.loading')) : null,
-                phase === 'ready' && entries.length === 0
-                  ? h('p', { className: 'lc-status' }, tab === 'shared' ? t('memory.sharedEmpty') : t('memory.workspaceEmpty'))
-                  : null,
-                phase === 'ready' ? entries.map(entryRow) : null,
+                phase === 'ready' ? h('div', null, sharedBlock, workspaceBlocks) : null,
               ),
             ),
           );
@@ -1314,13 +1389,7 @@ window.__ModuleLoader__.load({
         h('style', null, CSS),
         h(
           'button',
-          {
-            type: 'button',
-            className: 'lc-nav',
-            onClick: () => setOpen(true),
-            title: t('memory.title'),
-            'data-lc-action': 'open-memory',
-          },
+          { type: 'button', className: 'lc-nav', onClick: () => setOpen(true), title: t('memory.title'), 'data-lc-action': 'open-memory' },
           h('span', null, t('memory.button')),
         ),
         dialog,

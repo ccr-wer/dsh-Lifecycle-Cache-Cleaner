@@ -2,7 +2,7 @@
 
 DSH 本地 Agent 的 KV cache 生命周期管理（单包）。
 
-八件事：
+九件事：
 
 - **入口闸门**：单条工具输出过大 / 插入后水位越界 → 落盘，不调模型。
 - **工作日志固化**：摘要 → L5 校验（一致性）→ L6 原子提交（失败即回滚）。
@@ -11,7 +11,7 @@ DSH 本地 Agent 的 KV cache 生命周期管理（单包）。
 - **插件页状态卡**：一行状态 + 一个「释放引擎」按钮；读的是同一个 `runtime`，走的还是同一道闸门。
 - **侧栏会话面板**：列出会话，删除 = 把会话目录移到回收站（可按回），最近有写入的会话拒绝删除。
 - **个性化**：称呼 / 名字 / 回复风格 / 长期指令 / 人设，**只有用户能写**，保存后原样进 system prompt。
-- **记忆面板**：共享 / 本工作区两层都能在界面里加、删、改；模型的写入口没有变。
+- **记忆面板**：按「共享 + 每个工作区一组」折叠管理；模型提议先进待确认队列，用户点接受才落库。
 
 ## 一条最重要的规则
 
@@ -46,12 +46,13 @@ patch（`cordis.patch.yml`）插入一行插件条目，入口 `index.js` 导出
 |---|---|---|
 | `lifecycle_cache_status` 工具 | 让模型调用，或直接说“看下缓存状态” | 只读：引擎探测结论、闸门判定、记忆用量、会话监听状态 |
 | `lifecycle_cache_clean` 工具 | 模型调用，`confirm: true` 才真释放 | 必经统一闸门；探测不到就不动 |
+| `lifecycle_memory_propose` 工具 | 模型调用 | 只进「待确认」队列，用户接受后才落库 |
 | 删除会话后自动清理 | 自动（监听 `sessions/` 目录） | 发现会话目录消失 → 释放租约 → 经闸门尝试释放引擎 |
 | 记忆注入 | 自动 | 把共享/工作区记忆写进 system prompt（预算 1KB / 2KB） |
 | 插件页状态卡 | **Plugins → 本插件** | 一行状态 + 「释放引擎」按钮；按钮禁用时给出 `skip_*` 原因 |
 | 侧栏「会话」面板 | 侧栏底部 → 会话 | 列出会话；删除 = 移到回收站，最近有写入的拒绝 |
 | 侧栏「个性化」面板 | 侧栏底部 → 个性化 | 称呼 / 名字 / 风格 / 指令 / 人设，用户写、模型读 |
-| 侧栏「记忆」面板 | 侧栏底部 → 记忆 | 共享 / 本工作区条目增删 + 工作区整段文档编辑、归档 |
+| 侧栏「记忆」面板 | 侧栏底部 → 记忆 | 共享 + 每个工作区一组（可折叠）：条目增删、文档编辑/归档、模型提议接受/拒绝 |
 
 配置写在 `cordis.patch.yml` 的插件行里：
 
@@ -189,43 +190,53 @@ patch（`cordis.patch.yml`）插入一行插件条目，入口 `index.js` 导出
 
 校验失败（超长、类型不对）回 `400 invalid_profile`，**且不覆盖已有设定**——半次保存不写盘。
 
-## 记忆面板（共享 / 本工作区）
+## 记忆面板（共享 + 按工作区折叠）
 
-侧栏底部第三个入口 **记忆**，两个标签页：
+侧栏底部第三个入口 **记忆**。面板是一棵折叠列表：
 
-| 标签 | 内容 | 存在哪 |
+```text
+▾ 共享记忆（所有工作区共享）                    3 条 · 1 条待确认
+   ┌ 写一条要记住的事实…                        [添加]
+   ├ 模型建议写入（等你确认）
+   │   部署前必须跑完整测试套件        理由：跨仓库通用   [接受] [拒绝]
+   └ 发布前必须跑完整测试套件   你写的 · 更新于 …        [删除]
+▸ alpha                                         0 条
+▸ default-workspace                          2 条 · 1 条待确认
+```
+
+- **工作区组是自动出现的**：列表来自宿主 `workspaceRegistry`，新建的项目目录只要被 DSH 登记过，
+  面板里就会多一组；再并上 `typed.json` 里已经出现过的工作区（历史数据不会丢）。
+- 组内可以：加条目、删条目、编辑并保存整段 Markdown 文档、归档文档。
+- 「当前」标记表示插件自己所在的工作区（用于对比，不代表唯一可写目标）。
+
+**谁写、写到哪**：
+
+| 谁 | 入口 | 归属 |
 |---|---|---|
-| 共享记忆 | 条目列表：加 / 删，显示作者、更新时间、冲突标记 | `memory/typed.json`（`scope: shared`） |
-| 本工作区 | ① 整段 Markdown 文档（编辑 / 保存 / 归档）② 本工作区条目 | `memory/workspaces/<key>.md` + `typed.json`（`scope: workspace`） |
+| 用户 | 面板里的「添加」 | 哪个组就写哪个组（`addUserEntry`，归属听用户的） |
+| 用户 | 面板里的「接受」 | 提议自带的目标（共享 / 指定工作区） |
+| 模型 | `lifecycle_memory_propose` 工具 | **只入待确认队列**（`memory/pending.json`），接受前不进记忆 |
 
-**两条写入路径，规则不同但语义共用**：
+提议工具的参数：`text`、`scope`（`shared` / `workspace`）、`workspace`（工作区绝对路径，workspace 时必填）、
+`reason`。同一目标下相同文本只排一条；队列上限 50 条；工作区提议缺路径直接拒收——
+免得列表里出现一堆不知道往哪儿放的“无主建议”。
 
-| 谁写 | 入口 | 归属 | 说明 |
-|---|---|---|---|
-| 模型 | `propose()` | 程序裁决（`classifyScope`） | 模型只能提议，UI 里不出现 |
-| 用户 | `addUserEntry()` | **用户选哪层就哪层** | 消重 / 取代 / 冲突规则与 `propose` 完全一致 |
-
-为什么用户写不跑 `classifyScope`：那条裁决是为了拦模型把本机路径塞进共享层；用户是权威，
-而且界面本来就分了两栏，再自作主张改归属只会让人困惑。
-
-**删除是人话**：`removeEntry()` 真删条目；如果删的是“新版本”，会把被它取代的旧版本**恢复**回来，
-顺手清掉另一方的冲突标记——不会留下永远隐藏的孤儿。
-
-**工作区文档**用 `WorkspaceMemoryStore.write({confirmed:true})` 原子写；「归档」是移动到
-`memory/.archive/`，可人工恢复；空内容会被拒绝（要清空请用归档，不要存空文档）。
+**删除是人话**：`removeEntry()` 真删条目；删的是“新版本”时会把被它取代的旧版本**恢复**回来，
+顺手清掉另一方的冲突标记。**文档归档**是移动到 `memory/.archive/`（可人工恢复），空内容拒绝保存。
 
 接口（同源、owner-only）：
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
-| `GET` | `/lifecycle-cache/api/memory` | 两层条目 + 文档 + 注入预算 |
-| `POST` | `/lifecycle-cache/api/memory/entry` | `{ scope, text }` 新增条目 |
+| `GET` | `/lifecycle-cache/api/memory` | 共享组 + 工作区组（含文档与待确认提议）+ 预算 |
+| `POST` | `/lifecycle-cache/api/memory/entry` | `{ scope, workspaceId?, text }` 新增条目 |
 | `POST` | `/lifecycle-cache/api/memory/entry/remove` | `{ id, confirm: true }` 删除（可恢复被取代版本） |
-| `PUT` | `/lifecycle-cache/api/memory/doc` | `{ text }` 保存工作区文档 |
-| `POST` | `/lifecycle-cache/api/memory/doc/archive` | `{ confirm: true }` 归档工作区文档 |
+| `POST` | `/lifecycle-cache/api/memory/pending/accept` | `{ id }` 接受提议（落库） |
+| `POST` | `/lifecycle-cache/api/memory/pending/reject` | `{ id }` 拒绝提议（丢弃） |
+| `PUT` | `/lifecycle-cache/api/memory/doc` | `{ workspaceId, text }` 保存某工作区文档 |
+| `POST` | `/lifecycle-cache/api/memory/doc/archive` | `{ workspaceId, confirm: true }` 归档文档 |
 
-**预算照旧**：共享 1KB / 工作区 2KB，超出的条目在注入时被丢弃并计数（不静默丢）；界面里
-直接显示这两个数字，方便你判断是不是写太多了。
+**预算照旧**：共享 1KB / 工作区 2KB，超出的条目在注入时被丢弃并计数（不静默丢）。
 
 ## 跨平台
 
@@ -282,11 +293,12 @@ Windows/Linux 采样器目前只有单元测试覆盖，没有真机显存断言
 | `cordis.patch.yml` | 组合包 patch：插入一行插件条目 |
 | `locale/` `icon.svg` | 插件管理器里显示的标题、描述、图标 |
 | `lib/host/runtime.js` | 运行时：探测 → 闸门 → 释放，以及记忆文本与删除后处理 |
-| `lib/host/tools.js` | 两个模型的工具定义与文本渲染 |
+| `lib/host/tools.js` | 三个模型的工具定义与文本渲染（状态 / 释放 / 记忆提议） |
 | `lib/host/session-watcher.js` | 会话目录监听（轮询，跨平台一致） |
 | `lib/host/web-api.js` | UI 的 HTTP 面：认证 → 路由 → `runtime` / `session-store`（不做判定） |
 | `lib/host/session-store.js` | 会话清单与「移到回收站」：uuid 收敛、路径包含、空闲窗口、占用检测 |
 | `lib/host/profile-store.js` | 用户设定：校验、原子写、渲染成 prompt 片段（空设定不占空间） |
+| `lib/host/proposal-store.js` | 模型的记忆提议队列（`memory/pending.json`）：去重、上限、接受/拒绝 |
 | `lib/core/memory-store.js` | 条目化记忆：模型的 `propose()` + 用户的 `addUserEntry()` / `removeEntry()`（同一套消重/取代/冲突规则） |
 | `adapters/engine-http.js` | 本地引擎探测（只读 GET）与 ollama 卸载 |
 | `cleaner.js` | 主循环：tick / rebuild / onCompacted / releaseCache |
@@ -304,7 +316,7 @@ Windows/Linux 采样器目前只有单元测试覆盖，没有真机显存断言
 ## 测试
 
 ```bash
-node --test               # 全部：197 项，195 pass / 2 skip
+node --test               # 全部：206 项，204 pass / 2 skip
 ```
 
 V1–V6 日志流水线，V7–V11 引擎释放与工作区记忆，S 系列压缩接缝，I 系列闸门不变量，
@@ -312,7 +324,8 @@ X 系列跨平台采样/归一/重试，M 系列记忆归属与消重，P 系列
 H 系列宿主接入（工具、记忆注入、删除监听），U 系列 UI 的 HTTP 面（认证 / 投影 / 拒绝路径），
 C 系列 Client 半边（清单、注册、渲染一次），Z 系列会话清单与回收站，W 系列会话接口（确认 / 409 / 触发清理），
 R 系列用户设定（校验 / 合并 / 渲染 / 注入），F 系列设定接口（保存 / 校验失败不落盘 / 认证优先），
-N 系列用户写记忆（归属 / 消重 / 取代 / 删除恢复），Y 系列记忆面板接口（两层条目 / 文档 / 归档）。
+N 系列用户写记忆（归属 / 消重 / 取代 / 删除恢复），Y 系列记忆面板接口（分组 / 文档 / 归档 / 提议接受拒绝），
+J 系列模型提议队列（只排队 / 目标必填 / 去重 / 上限 / 工具文案）。
 
 > 界面验收分两半：`node --test` 只证明接线与文案；卡片是不是真的长在插件页上、
 > 图标与中英文标题是否正常，必须在装好的页面里看（见 `docs/DECISIONS.md` D20）。
