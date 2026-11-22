@@ -1036,10 +1036,8 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = React.useState(null);
       const [busy, setBusy] = React.useState(false);
       const [expanded, setExpanded] = React.useState({ shared: true });
-      const [drafts, setDrafts] = React.useState({});
       const [composers, setComposers] = React.useState({});
       const [pendingId, setPendingId] = React.useState(null);
-      const [archivePending, setArchivePending] = React.useState(null);
       const alive = React.useRef(true);
 
       React.useEffect(() => {
@@ -1055,9 +1053,6 @@ window.__ModuleLoader__.load({
           const result = await request('GET', '/memory');
           if (!alive.current) return;
           setData(result);
-          const nextDrafts = {};
-          for (const group of result?.workspaces ?? []) nextDrafts[group.id] = group.doc ?? '';
-          setDrafts(nextDrafts);
           setPhase('ready');
         } catch (error) {
           if (alive.current) {
@@ -1099,7 +1094,6 @@ window.__ModuleLoader__.load({
       const toggle = (id) => setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
 
       const setComposer = (id, value) => setComposers((prev) => ({ ...prev, [id]: value }));
-      const setDraft = (id, value) => setDrafts((prev) => ({ ...prev, [id]: value }));
 
       const addEntry = (groupId, scope) =>
         act(async () => {
@@ -1114,20 +1108,6 @@ window.__ModuleLoader__.load({
           await request('POST', '/memory/entry/remove', { id, confirm: true });
           if (alive.current) setPendingId(null);
         });
-
-      const saveDoc = (groupId) =>
-        act(async () => {
-          await request('PUT', '/memory/doc', { workspaceId: groupId, text: drafts[groupId] ?? '' });
-        });
-
-      const archiveDoc = (groupId) =>
-        act(async () => {
-          await request('POST', '/memory/doc/archive', { workspaceId: groupId, confirm: true });
-          if (alive.current) {
-            setArchivePending(null);
-            setDraft(groupId, '');
-          }
-        }, t('memory.archived'));
 
       const acceptProposal = (item) =>
         act(async () => {
@@ -1293,42 +1273,9 @@ window.__ModuleLoader__.load({
             ? h(
                 'div',
                 { className: 'lc-groupBody' },
-                h('div', { className: 'lc-form' },
-                  h('span', { className: 'lc-label' }, t('memory.docLabel')),
-                  h('div', { className: 'lc-formHint', title: group.title || group.id }, group.id),
-                  h('textarea', {
-                    className: 'lc-textarea',
-                    value: drafts[group.id] ?? '',
-                    placeholder: t('memory.docPlaceholder'),
-                    onChange: (event) => setDraft(group.id, event && event.target ? event.target.value : ''),
-                    'data-lc-field': `memory-doc-${group.id}`,
-                    style: { minHeight: '96px' },
-                  }),
-                  h(
-                    'div',
-                    { className: 'lc-formActions' },
-                    h(
-                      'button',
-                      { type: 'button', className: 'lc-btn lc-primary', disabled: busy, onClick: () => void saveDoc(group.id) },
-                      t('memory.docSave'),
-                    ),
-                    archivePending === group.id
-                      ? h(
-                          'button',
-                          { type: 'button', className: 'lc-btn lc-danger', disabled: busy, onClick: () => void archiveDoc(group.id) },
-                          t('memory.archiveConfirm'),
-                        )
-                      : h(
-                          'button',
-                          { type: 'button', className: 'lc-btn', disabled: busy, onClick: () => setArchivePending(group.id) },
-                          t('memory.archive'),
-                        ),
-                    archivePending === group.id
-                      ? h('button', { type: 'button', className: 'lc-btn', disabled: busy, onClick: () => setArchivePending(null) }, t('memory.cancel'))
-                      : null,
-                    group.docBytes ? h('span', { className: 'lc-formHint' }, `${group.docBytes} B`) : null,
-                  ),
-                ),
+                // 这里刻意**没有**“整段 Markdown 文档”编辑器：那份文档不参与
+                // prompt 注入，写进去也读不到，和下面的条目是同一件事的两份拷贝。
+                // 工作区记忆只有条目一条路（D28）。
                 composer(group.id, 'workspace'),
                 group.pending.length > 0
                   ? h('div', null, h('div', { className: 'lc-groupTitle' }, t('memory.proposed')), group.pending.map(proposalRow))

@@ -206,7 +206,9 @@ patch（`cordis.patch.yml`）插入一行插件条目，入口 `index.js` 导出
 
 - **工作区组是自动出现的**：列表来自宿主 `workspaceRegistry`，新建的项目目录只要被 DSH 登记过，
   面板里就会多一组；再并上 `typed.json` 里已经出现过的工作区（历史数据不会丢）。
-- 组内可以：加条目、删条目、编辑并保存整段 Markdown 文档、归档文档。
+- 组内可以：加条目、删条目；模型提议在这里接受/拒绝。
+- **不提供“整段 Markdown 文档”编辑器**：那份文档不参与 prompt 注入，写进去模型也读不到，
+  和条目是同一件事的两份拷贝（D28）。工作区记忆只有条目一条路。
 - 「当前」标记表示插件自己所在的工作区（用于对比，不代表唯一可写目标）。
 
 **谁写、写到哪**：
@@ -222,7 +224,7 @@ patch（`cordis.patch.yml`）插入一行插件条目，入口 `index.js` 导出
 免得列表里出现一堆不知道往哪儿放的“无主建议”。
 
 **删除是人话**：`removeEntry()` 真删条目；删的是“新版本”时会把被它取代的旧版本**恢复**回来，
-顺手清掉另一方的冲突标记。**文档归档**是移动到 `memory/.archive/`（可人工恢复），空内容拒绝保存。
+顺手清掉另一方的冲突标记。
 
 接口（同源、owner-only）：
 
@@ -233,8 +235,8 @@ patch（`cordis.patch.yml`）插入一行插件条目，入口 `index.js` 导出
 | `POST` | `/lifecycle-cache/api/memory/entry/remove` | `{ id, confirm: true }` 删除（可恢复被取代版本） |
 | `POST` | `/lifecycle-cache/api/memory/pending/accept` | `{ id }` 接受提议（落库） |
 | `POST` | `/lifecycle-cache/api/memory/pending/reject` | `{ id }` 拒绝提议（丢弃） |
-| `PUT` | `/lifecycle-cache/api/memory/doc` | `{ workspaceId, text }` 保存某工作区文档 |
-| `POST` | `/lifecycle-cache/api/memory/doc/archive` | `{ workspaceId, confirm: true }` 归档文档 |
+| `PUT` | `/lifecycle-cache/api/memory/doc` | `{ workspaceId, text }` 保存某工作区文档（UI 不再暴露，留给手工/库用法） |
+| `POST` | `/lifecycle-cache/api/memory/doc/archive` | `{ workspaceId, confirm: true }` 归档文档（同上） |
 
 **预算照旧**：共享 1KB / 工作区 2KB，超出的条目在注入时被丢弃并计数（不静默丢）。
 
