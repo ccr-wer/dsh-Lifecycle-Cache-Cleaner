@@ -142,6 +142,49 @@ export function apply(ctx, config = {}) {
     runtime.diagnostics.push('ctx.inject 不可用，跳过记忆注入');
   }
 
+  // 工作区记忆必须**按会话的 cwd** 渲染：桌面进程里插件的 workspaceId 是 profile 目录，
+  // 用它渲染会把所有项目的条目串在一起。所以给每个 agent 注册一段 scoped section，
+  // 共享层仍然在全局 section 里（`runtime.memoryText()` 现在只渲染共享层）。
+  const agentMemoryFibers = new Map();
+  const installAgentMemory = (agent) => {
+    if (!agent || !agent.id || agentMemoryFibers.has(agent.id)) return;
+    const workspaceId = agent?.session?.header?.cwd ?? null;
+    if (!workspaceId || !agent.ctx || typeof agent.ctx.inject !== 'function') return;
+    try {
+      const fiber = agent.ctx.inject(['systemPrompt'], (scoped) => {
+        scoped.systemPrompt.section({
+          name: 'plugin:lifecycle-workspace-memory',
+          order: 9210,
+          text: () => runtime.workspaceMemoryText(workspaceId),
+        });
+      });
+      agentMemoryFibers.set(agent.id, fiber);
+    } catch (err) {
+      runtime.diagnostics.push(`agent memory section: ${err?.message ?? err}`);
+    }
+  };
+
+  if (typeof ctx.on === 'function') {
+    ctx.on('agent/created', ({ agent }) => {
+      installAgentMemory(agent);
+    });
+    // 插件热重载时，已经存在的 agent 不会再有 agent/created 事件，补一遍。
+    try {
+      const agents = typeof ctx.get === 'function' ? ctx.get('agents') : undefined;
+      for (const agent of agents?.list?.() ?? []) installAgentMemory(agent);
+    } catch (err) {
+      runtime.diagnostics.push(`agents.list: ${err?.message ?? err}`);
+    }
+    ctx.effect(() => () => {
+      for (const fiber of agentMemoryFibers.values()) {
+        try {
+          fiber?.();
+        } catch {}
+      }
+      agentMemoryFibers.clear();
+    });
+  }
+
   // UI 的 HTTP 面：同样只能靠 ctx.inject 等 webServer/connection 上线。
   // `ctx.get` 用来判断“这是不是真正的 Cordis Context”——纯对象假 ctx（测试）
   // 没有 get()，也没有可选服务解析能力，此时不注册第二条 inject，

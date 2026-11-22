@@ -238,6 +238,10 @@ patch（`cordis.patch.yml`）插入一行插件条目，入口 `index.js` 导出
 
 **预算照旧**：共享 1KB / 工作区 2KB，超出的条目在注入时被丢弃并计数（不静默丢）。
 
+**注入按会话走**：共享层进全局 prompt section；工作区层按**会话自己的 cwd**给每个 agent
+注册一段 scoped section（`plugin:lifecycle-workspace-memory`），所以 A 项目的条目不会出现在
+B 项目的对话里。插件热重载时会补注册给已经存在的 agent。
+
 ## 跨平台
 
 | 能力 | Windows | Linux | macOS |
@@ -316,7 +320,7 @@ Windows/Linux 采样器目前只有单元测试覆盖，没有真机显存断言
 ## 测试
 
 ```bash
-node --test               # 全部：206 项，204 pass / 2 skip
+node --test               # 全部：208 项，206 pass / 2 skip
 ```
 
 V1–V6 日志流水线，V7–V11 引擎释放与工作区记忆，S 系列压缩接缝，I 系列闸门不变量，

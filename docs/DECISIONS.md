@@ -513,6 +513,28 @@ GitHub 仓库名不改（本来就对）。
 - `node --test` 覆盖了排队/去重/上限/接受拒绝/分组；**真实注入效果**仍以会话日志里的
   `system/message` 为准（见 D23）。
 
+## D27. 工作区记忆按 agent 的 cwd 注入，而不是插件自己的 workspaceId
+
+**背景**：D26 把记忆面板改成按工作区分组、条目按工作区路径存；但注入还在用插件的
+`workspaceId`（桌面进程里等于 profile 目录）。结果是**界面里分好了，模型读到的还是混在一起的一份**。
+
+**决策**：
+
+1. **全局 section 只渲染共享层**（`runtime.memoryText()` 改为 `render({workspaceId:null})`）。
+2. **工作区层按 agent 注册 scoped section**：`agent/created` 时读 `agent.session.header.cwd`，
+   在 `agent.ctx` 里 `inject(['systemPrompt'])` 注册 `plugin:lifecycle-workspace-memory`（order 9210），
+   `text` 用 `runtime.workspaceMemoryText(cwd)` 渲染该工作区的条目（不含共享层，避免重复）。
+3. **热重载补注册**：插件重启时已有 agent 不会再发 `agent/created`，所以同时用
+   `ctx.get('agents').list()` 补一遍；这样改代码/重启插件后当前会话也能立刻拿到。
+4. 拿不到 cwd 的 agent 不注册（共享层照常注入）。
+
+**代价与已知边界**：
+
+- 依赖 `agent.session.header.cwd` 与 `agents.list()` 这两个宿主内部形状；宿主改了要跟着改。
+- 工作区**整段 Markdown 文档**目前仍然只落盘、不进 prompt（注入的只有条目）。
+  要不要把文档也注进去是下一个决定——它会和 2KB 预算抢空间。
+- `node --test` 覆盖了隔离渲染与 section 注册（N9/N10）；真实效果仍要看会话日志的 `system/message`。
+
 ## T11. 非 macOS 尚未做过真机显存断言
 
 采样器补齐后，Windows/Linux 的解析逻辑有单元测试覆盖，但**没有在真机上验证过“删除会话 -> 显存真的掉下来”**。V2/V2b 在非 macOS 上 skip，这是目前唯一跑过真实下降断言的平台。

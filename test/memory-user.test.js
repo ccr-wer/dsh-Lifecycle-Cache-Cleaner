@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { TypedMemoryStore, MEMORY_SCOPE } from '../lib/core/memory-store.js';
+import { HostRuntime } from '../lib/host/runtime.js';
+import { apply } from '../index.js';
 
 // N 系列：用户从 UI 写记忆（`addUserEntry` / `removeEntry`）。
 // 与模型的 `propose()` 的区别只有一条：归属听用户的；其余消重/取代/冲突语义必须一致。
@@ -98,4 +100,70 @@ test('N8 用户写入不会触发“跨工作区自动升级”', () => {
   assert.equal(second.ok, true);
   assert.equal(second.promoted ?? null, null, '用户手动写入不走 propose 的升级链路');
   assert.equal(memory.list({ scope: 'shared' }).length, 0);
+});
+
+test('N9 工作区记忆按工作区隔离渲染；全局记忆只出共享层', () => {
+  const rootDir = tmpRoot();
+  const runtime = new HostRuntime({ rootDir, workspaceId: 'C:\\profile-dir', adapter: null });
+  runtime.memory.addUserEntry({ scope: 'shared', text: '共享的事实' });
+  runtime.memory.addUserEntry({ scope: 'workspace', workspaceId: 'C:\\proj\\a', text: 'A 工作区的事实' });
+  runtime.memory.addUserEntry({ scope: 'workspace', workspaceId: 'C:\\proj\\b', text: 'B 工作区的事实' });
+
+  const sharedOnly = runtime.memoryText();
+  assert.match(sharedOnly, /共享的事实/);
+  assert.equal(/A 工作区的事实|B 工作区的事实/.test(sharedOnly), false, '全局 prompt 不能串工作区条目');
+
+  const a = runtime.workspaceMemoryText('C:\\proj\\a');
+  assert.match(a, /A 工作区的事实/);
+  assert.equal(/B 工作区的事实/.test(a), false);
+  assert.equal(/共享的事实/.test(a), false, '共享层走全局 section，不在工作区 section 里重复');
+  assert.equal(runtime.workspaceMemoryText('C:\\proj\\empty'), '');
+});
+
+test('N10 apply 会在每个 agent 的 scope 里注册“本工作区记忆”section', () => {
+  const rootDir = tmpRoot();
+  const runtime = new HostRuntime({ rootDir, workspaceId: 'C:\\profile-dir', adapter: null });
+  runtime.memory.addUserEntry({ scope: 'workspace', workspaceId: 'C:\\proj\\a', text: 'A 工作区的事实' });
+
+  const sections = [];
+  const agent = {
+    id: 'agent-1',
+    session: { header: { cwd: 'C:\\proj\\a' } },
+    ctx: {
+      inject(names, cb) {
+        if (names.includes('systemPrompt')) cb({ systemPrompt: { section: (s) => sections.push(s) } });
+        return () => {};
+      },
+    },
+  };
+
+  const ctx = {
+    tools: { register: () => () => {} },
+    effect(fn) {
+      const dispose = fn();
+      return () => dispose?.();
+    },
+    on(event, listener) {
+      if (event === 'agent/created') listener({ agent });
+      return () => {};
+    },
+    get(name) {
+      if (name === 'agents') return { list: () => [agent] };
+      if (name === 'systemPrompt') {
+        return { variable: () => () => {}, section: () => () => {} };
+      }
+      return undefined;
+    },
+    inject(names, cb) {
+      if (names.includes('systemPrompt')) {
+        cb({ variable: () => () => {}, section: () => () => {} });
+      }
+    },
+  };
+
+  apply(ctx, { rootDir, workspaceId: 'C:\\profile-dir', engine: { kind: 'none' } });
+
+  assert.equal(sections.length, 1, '每个 agent 只注册一段');
+  assert.equal(sections[0].name, 'plugin:lifecycle-workspace-memory');
+  assert.match(sections[0].text(), /A 工作区的事实/);
 });
