@@ -71,6 +71,26 @@ window.__ModuleLoader__.load({
       'panel.close': '关闭',
       'panel.refresh': '刷新',
       'panel.unknown': '未知',
+      'profile.button': '个性化',
+      'profile.title': '个性化（只由你编辑）',
+      'profile.hint': '这些内容由你在界面里写，模型没有任何写入口；保存后会原样进入 system prompt。',
+      'profile.userName': '你希望它怎么称呼你',
+      'profile.assistantName': '它叫什么名字',
+      'profile.style': '回复风格',
+      'profile.instructions': '长期指令',
+      'profile.persona': '人设',
+      'profile.instructionsHint': '每次对话都会生效，例如：先给结论，再给依据。',
+      'profile.personaHint': '身份、性格、表达方式，例如：你是夜枭，说话直接。',
+      'profile.save': '保存',
+      'profile.saving': '保存中…',
+      'profile.reload': '重新载入',
+      'profile.saved': '已保存。',
+      'profile.savedAt': '上次保存 {time}',
+      'profile.error': '保存失败：{message}',
+      'profile.loadError': '读取失败：{message}',
+      'profile.style.default': '默认',
+      'profile.style.concise': '简洁',
+      'profile.style.detailed': '详细',
     };
 
     const en = {
@@ -120,6 +140,26 @@ window.__ModuleLoader__.load({
       'panel.close': 'Close',
       'panel.refresh': 'Refresh',
       'panel.unknown': 'unknown',
+      'profile.button': 'Personalize',
+      'profile.title': 'Personalization (only you can edit)',
+      'profile.hint': 'You write these here; the model has no way to write them. Saving puts them into the system prompt verbatim.',
+      'profile.userName': 'How it should address you',
+      'profile.assistantName': 'Its name',
+      'profile.style': 'Reply style',
+      'profile.instructions': 'Standing instructions',
+      'profile.persona': 'Persona',
+      'profile.instructionsHint': 'Applied to every conversation, e.g. lead with the conclusion, then the reasoning.',
+      'profile.personaHint': 'Identity, character, and voice, e.g. you are Nightowl and you speak plainly.',
+      'profile.save': 'Save',
+      'profile.saving': 'Saving…',
+      'profile.reload': 'Reload',
+      'profile.saved': 'Saved.',
+      'profile.savedAt': 'Last saved {time}',
+      'profile.error': 'Save failed: {message}',
+      'profile.loadError': 'Read failed: {message}',
+      'profile.style.default': 'Default',
+      'profile.style.concise': 'Concise',
+      'profile.style.detailed': 'Detailed',
     };
 
     const CSS = [
@@ -166,6 +206,17 @@ window.__ModuleLoader__.load({
       '.lc-status{margin:0;padding:8px 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#666)}',
       '.lc-statusOk{color:var(--dsw-alias-state-success-primary,#1e8449)}',
       '.lc-statusError{color:var(--dsw-alias-state-error-primary,#c0392b)}',
+      // 个性化表单
+      '.lc-form{display:flex;flex-direction:column;gap:12px;padding:4px 0 8px}',
+      '.lc-field{display:flex;flex-direction:column;gap:4px}',
+      '.lc-label{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#555)}',
+      '.lc-input,.lc-select,.lc-textarea{box-sizing:border-box;width:100%;padding:6px 8px;font:inherit;font-size:13px;',
+      'color:var(--dsw-alias-label-primary,#111);background:var(--dsw-alias-fill-l1,transparent);',
+      'border:1px solid var(--dsw-alias-border-l2,#ccc);border-radius:7px}',
+      '.lc-textarea{min-height:76px;resize:vertical;line-height:20px}',
+      '.lc-input:focus,.lc-select:focus,.lc-textarea:focus{outline:none;border-color:var(--dsw-alias-border-selected,#247bbf)}',
+      '.lc-formActions{display:flex;align-items:center;gap:8px;padding-top:2px}',
+      '.lc-formHint{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#888)}',
     ].join('');
 
     /** 只替换 `{name}`；locale 服务自身通常也会插值，这里兜底。 */
@@ -633,6 +684,217 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // ------------------------------------------------------------ 个性化面板
+
+    const EMPTY_DRAFT = {
+      assistantName: '',
+      userName: '',
+      style: 'default',
+      instructions: '',
+      persona: '',
+    };
+
+    /**
+     * 用户自有的助手设定：称呼 / 名字 / 风格 / 长期指令 / 人设。
+     *
+     * 与「记忆」刻意分开：记忆是模型提议、用户确认；这里模型**没有写入口**，
+     * 只有这个表单能写，保存后由 Host 原样注入 system prompt。
+     */
+    function ProfilePanel(props) {
+      const t = makeText(props);
+      const [open, setOpen] = React.useState(false);
+      const [draft, setDraft] = React.useState({ ...EMPTY_DRAFT });
+      const [phase, setPhase] = React.useState('idle');
+      const [savedAt, setSavedAt] = React.useState(0);
+      const [busy, setBusy] = React.useState(false);
+      const [notice, setNotice] = React.useState(null);
+      const alive = React.useRef(true);
+
+      React.useEffect(() => {
+        alive.current = true;
+        return () => {
+          alive.current = false;
+        };
+      }, []);
+
+      const load = React.useCallback(async () => {
+        setPhase('loading');
+        try {
+          const profile = await request('GET', '/profile');
+          if (!alive.current) return;
+          setDraft({
+            assistantName: profile?.assistantName ?? '',
+            userName: profile?.userName ?? '',
+            style: profile?.style ?? 'default',
+            instructions: profile?.instructions ?? '',
+            persona: profile?.persona ?? '',
+          });
+          setSavedAt(Number(profile?.updatedAt) || 0);
+          setPhase('ready');
+          setNotice(null);
+        } catch (error) {
+          if (alive.current) {
+            setPhase('error');
+            setNotice({ ok: false, text: t('profile.loadError', { message: messageOf(error) }) });
+          }
+        }
+      }, [t]);
+
+      React.useEffect(() => {
+        if (!open) return undefined;
+        void load();
+        const onKey = (event) => {
+          if (event.key === 'Escape') setOpen(false);
+        };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+      }, [open, load]);
+
+      const save = React.useCallback(async () => {
+        setBusy(true);
+        setNotice(null);
+        try {
+          const saved = await request('PUT', '/profile', draft);
+          if (!alive.current) return;
+          setSavedAt(Number(saved?.updatedAt) || Date.now());
+          setNotice({ ok: true, text: t('profile.saved') });
+          setPhase('ready');
+        } catch (error) {
+          if (alive.current) setNotice({ ok: false, text: t('profile.error', { message: messageOf(error) }) });
+        } finally {
+          if (alive.current) setBusy(false);
+        }
+      }, [draft, t]);
+
+      const edit = (key) => (event) => {
+        const value = event && event.target ? event.target.value : '';
+        setDraft((prev) => ({ ...prev, [key]: value }));
+      };
+
+      const field = (key, label, hint, kind) =>
+        h(
+          'label',
+          { className: 'lc-field' },
+          h('span', { className: 'lc-label' }, label),
+          kind === 'textarea'
+            ? h('textarea', {
+                className: 'lc-textarea',
+                value: draft[key] ?? '',
+                placeholder: hint ?? '',
+                onChange: edit(key),
+                'data-lc-field': key,
+              })
+            : h('input', {
+                className: 'lc-input',
+                type: 'text',
+                value: draft[key] ?? '',
+                placeholder: hint ?? '',
+                onChange: edit(key),
+                'data-lc-field': key,
+              }),
+        );
+
+      const dialog = !open
+        ? null
+        : h(
+            'div',
+            { className: 'lc-scrim', role: 'presentation' },
+            h(
+              'div',
+              {
+                className: 'lc-dialog',
+                role: 'dialog',
+                'aria-modal': 'true',
+                'aria-label': t('profile.title'),
+                'data-lc-profile': '1',
+              },
+              h(
+                'div',
+                { className: 'lc-dialogHead' },
+                h('span', { className: 'lc-title' }, t('profile.title')),
+                h(
+                  'span',
+                  { className: 'lc-actions' },
+                  h(
+                    'button',
+                    { type: 'button', className: 'lc-btn', onClick: () => void load(), disabled: busy || phase === 'loading' },
+                    t('profile.reload'),
+                  ),
+                  h('button', { type: 'button', className: 'lc-btn', onClick: () => setOpen(false) }, t('panel.close')),
+                ),
+              ),
+              h(
+                'div',
+                { className: 'lc-dialogBody' },
+                h('p', { className: 'lc-hint' }, t('profile.hint')),
+                notice
+                  ? h(
+                      'p',
+                      { className: `lc-status ${notice.ok ? 'lc-statusOk' : 'lc-statusError'}`, role: 'status' },
+                      notice.text,
+                    )
+                  : null,
+                h(
+                  'div',
+                  { className: 'lc-form' },
+                  field('userName', t('profile.userName')),
+                  field('assistantName', t('profile.assistantName')),
+                  h(
+                    'label',
+                    { className: 'lc-field' },
+                    h('span', { className: 'lc-label' }, t('profile.style')),
+                    h(
+                      'select',
+                      { className: 'lc-select', value: draft.style, onChange: edit('style'), 'data-lc-field': 'style' },
+                      ['default', 'concise', 'detailed'].map((id) =>
+                        h('option', { key: id, value: id }, t(`profile.style.${id}`)),
+                      ),
+                    ),
+                  ),
+                  field('instructions', t('profile.instructions'), t('profile.instructionsHint'), 'textarea'),
+                  field('persona', t('profile.persona'), t('profile.personaHint'), 'textarea'),
+                  h(
+                    'div',
+                    { className: 'lc-formActions' },
+                    h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'lc-btn lc-primary',
+                        onClick: () => void save(),
+                        disabled: busy || phase === 'loading',
+                        'data-lc-action': 'save-profile',
+                      },
+                      busy ? t('profile.saving') : t('profile.save'),
+                    ),
+                    savedAt
+                      ? h('span', { className: 'lc-formHint' }, t('profile.savedAt', { time: formatTime(savedAt) }))
+                      : null,
+                  ),
+                ),
+              ),
+            ),
+          );
+
+      return h(
+        'div',
+        null,
+        h('style', null, CSS),
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'lc-nav',
+            onClick: () => setOpen(true),
+            title: t('profile.title'),
+            'data-lc-action': 'open-profile',
+          },
+          h('span', null, t('profile.button')),
+        ),
+        dialog,
+      );
+    }
+
     // ------------------------------------------------------------ 插件接线
 
     function apply(ctx) {
@@ -656,7 +918,7 @@ window.__ModuleLoader__.load({
         ),
       );
 
-      // 侧栏页脚：会话列表入口。位置与设置项同区，宽度由宿主给（props.wide）。
+      // 侧栏页脚：两个入口。位置与设置项同区，宽度由宿主给（props.wide）。
       ctx.slots.inject('sidebar.footer.action', () =>
         ctx.slots.register(
           {
@@ -666,6 +928,19 @@ window.__ModuleLoader__.load({
             locale: NS,
           },
           SessionPanel,
+        ),
+      );
+
+      // 个性化：用户自己写称呼 / 名字 / 风格 / 指令 / 人设，模型没有写入口。
+      ctx.slots.inject('sidebar.footer.action', () =>
+        ctx.slots.register(
+          {
+            name: 'sidebar.footer.action',
+            id: 'lifecycle-cache-profile',
+            order: 41,
+            locale: NS,
+          },
+          ProfilePanel,
         ),
       );
     }

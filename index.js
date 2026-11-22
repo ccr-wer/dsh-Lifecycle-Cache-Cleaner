@@ -5,12 +5,13 @@
  * bundle 的 `package.json` 声明 `dsh.bundle.patch`，patch 里 insert 本包名，
  * 宿主据此加载本模块，期望导出 `apply(ctx, config)`。
  *
- * 实际能力（五个，全部可验证）：
+ * 实际能力（六个，全部可验证）：
  *   1. `lifecycle_cache_status` 工具 —— 引擎探测 + 闸门结论 + 记忆用量，只读
  *   2. `lifecycle_cache_clean` 工具 —— 经统一闸门释放引擎（需 confirm）
- *   3. system prompt 记忆注入 —— 共享/工作区记忆进模型上下文
+ *   3. system prompt 注入 —— 共享/工作区记忆 + 用户自己写的助手设定
  *   4. 插件页状态卡 —— 读状态、按按钮释放（仍走同一个 runtime）
  *   5. 侧栏「会话」面板 —— 列出会话、把选中的会话移到回收站（不 rm）
+ *   6. 侧栏「个性化」面板 —— 称呼 / 名字 / 风格 / 指令 / 人设，只有用户能写
  *
  * 不 import 任何 `@deepseek-ai/*` 包：profile 里解析不到宿主包，
  * 一切通过注入的 ctx 与 config 访问。
@@ -61,14 +62,20 @@ export function apply(ctx, config = {}) {
       return () => {};
     }
     const disposeVariable = systemPrompt.variable('lifecycle_memory', () => runtime.memoryText());
+    // 用户自己的设定（称呼 / 名字 / 风格 / 指令 / 人设）走同一个 section：
+    // 一个 section 里放两个变量，避免多注册一个 section 打乱既有断言。
+    const disposeProfile = systemPrompt.variable('lifecycle_profile', () => runtime.profileText());
     const disposeSection = systemPrompt.section({
       name: 'plugin:lifecycle-memory',
       order: 9200,
-      text: '## 记忆\n\n{{lifecycle_memory}}',
+      text: '{{lifecycle_profile}}## 记忆\n\n{{lifecycle_memory}}',
     });
     return () => {
       try {
         disposeSection?.();
+      } catch {}
+      try {
+        disposeProfile?.();
       } catch {}
       try {
         disposeVariable?.();
@@ -134,6 +141,7 @@ export function apply(ctx, config = {}) {
         sessionsDir,
         trashDir: path.join(runtime.rootDir, 'lifecycle-cache', 'trash'),
         minIdleMs: config.sessionDeleteMinIdleMs ?? 120000,
+        profileStore: runtime.profiles,
       });
       ctx.effect(() => dispose);
     });
