@@ -51,52 +51,43 @@ export function apply(ctx, config = {}) {
   };
 
   const wirePrompt = (systemPrompt) => {
-    try {
-      if (!systemPrompt?.variable || !systemPrompt?.section) {
-        runtime.diagnostics.push('systemPrompt 缺少 variable/section，跳过记忆注入');
-        return () => {};
-      }
-      const disposeVariable = systemPrompt.variable('lifecycle_memory', () => runtime.memoryText());
-      const disposeSection = systemPrompt.section({
-        name: 'plugin:lifecycle-memory',
-        order: 9200,
-        text: '## 记忆\n\n{{lifecycle_memory}}',
-      });
-      return () => {
-        try {
-          disposeSection?.();
-        } catch {}
-        try {
-          disposeVariable?.();
-        } catch {}
-      };
-    } catch (err) {
-      runtime.diagnostics.push(`记忆注入失败：${err?.message ?? err}`);
+    if (!systemPrompt?.variable || !systemPrompt?.section) {
+      runtime.diagnostics.push('systemPrompt 缺少 variable/section，跳过记忆注入');
       return () => {};
     }
+    const disposeVariable = systemPrompt.variable('lifecycle_memory', () => runtime.memoryText());
+    const disposeSection = systemPrompt.section({
+      name: 'plugin:lifecycle-memory',
+      order: 9200,
+      text: '## 记忆\n\n{{lifecycle_memory}}',
+    });
+    return () => {
+      try {
+        disposeSection?.();
+      } catch {}
+      try {
+        disposeVariable?.();
+      } catch {}
+    };
   };
 
   if (typeof ctx.effect === 'function') {
-    ctx.effect(() => {
-      const disposeTools = registerTools();
-      const disposePrompt =
-        typeof ctx.inject === 'function' ? () => {} : wirePrompt(ctx.systemPrompt);
-      return () => {
-        disposePrompt();
-        disposeTools();
-      };
-    });
-
-    // 可选服务：拿到 systemPrompt 才注入记忆，拿不到也不影响工具。
-    if (typeof ctx.inject === 'function') {
-      ctx.inject(['systemPrompt'], (sp) => {
-        const dispose = wirePrompt(sp);
-        ctx.effect(() => dispose);
-      });
-    }
+    ctx.effect(() => registerTools());
   } else {
     registerTools();
-    if (typeof ctx.inject !== 'function') wirePrompt(ctx.systemPrompt);
+  }
+
+  // systemPrompt 是**可选服务**：只能通过 ctx.inject 拿到。
+  // 直接读 `ctx.systemPrompt` 会在未注入时抛
+  // `cannot get property "variable" without inject`——即使包在 try 里也没用，
+  // 因为取值本身就会抛。所以这里不碰属性，只在 inject 回调里用。
+  if (typeof ctx.inject === 'function') {
+    ctx.inject(['systemPrompt'], (systemPrompt) => {
+      const dispose = wirePrompt(systemPrompt);
+      ctx.effect(() => dispose);
+    });
+  } else {
+    runtime.diagnostics.push('ctx.inject 不可用，跳过记忆注入');
   }
 }
 

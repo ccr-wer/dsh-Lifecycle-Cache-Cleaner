@@ -40,6 +40,10 @@ function makeCtx({ withPrompt = true } = {}) {
         };
       },
     };
+    // 真实宿主里 systemPrompt 只能通过 ctx.inject 拿到；直接读属性会抛。
+    ctx.inject = (names, cb) => {
+      if (names.includes('systemPrompt') && ctx.systemPrompt) cb(ctx.systemPrompt);
+    };
   }
   return { ctx, tools, variables, sections };
 }
@@ -161,6 +165,34 @@ test('H9 提供 ctx.inject 时走可选服务路径，避免重复注册 section
   assert.equal(tools.size, 2);
   assert.equal(sections.length, 1, 'section 只能注册一次');
   assert.ok(variables.has('lifecycle_memory'));
+});
+
+test('H10 未注入时读取 ctx.systemPrompt 不得被触发（重现 cannot get property without inject）', () => {
+  const seen = [];
+  const ctx = {
+    tools: { register: (d) => { seen.push(d.name); return () => {}; } },
+    effect: (fn) => {
+      const dispose = fn();
+      return () => dispose?.();
+    },
+  };
+  Object.defineProperty(ctx, 'systemPrompt', {
+    get() {
+      throw new Error('cannot get property "variable" without inject');
+    },
+  });
+
+  assert.doesNotThrow(() => apply(ctx, { rootDir: tmpRoot(), engine: { kind: 'none' } }));
+  assert.deepEqual(seen.sort(), ['lifecycle_cache_clean', 'lifecycle_cache_status']);
+});
+
+test('H11 ctx.inject 存在但服务缺席时，不注册 section 也不抛', () => {
+  const { ctx, tools, sections } = makeCtx();
+  ctx.inject = () => {}; // 服务永远不出现
+
+  assert.doesNotThrow(() => apply(ctx, { rootDir: tmpRoot(), engine: { kind: 'none' } }));
+  assert.equal(tools.size, 2);
+  assert.equal(sections.length, 0);
 });
 
 test('H8 没有 systemPrompt 服务时不抛错，且记录诊断', () => {

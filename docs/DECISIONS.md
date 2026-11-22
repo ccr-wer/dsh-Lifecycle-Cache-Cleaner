@@ -278,7 +278,9 @@ GitHub 仓库名不改（本来就对）。
 3. **`inject = ['tools']` 是硬依赖；`systemPrompt` 走 `ctx.inject()` 可选接入**。没有 prompt 服务的 profile 里插件仍能工作，只是不注入记忆。
 4. **引擎释放默认 `adapter-exclusive` + 必须 `confirm: true`**。探测只读（GET），释放只对 ollama（`keep_alive: 0`）成立；llama.cpp server 没有卸载接口，就直接抛错，不伪造“已释放”。
 
-**验证边界**：工具与闸门逻辑由 H1–H9 覆盖（假 ctx 捕获注册）；`systemPrompt.variable/section` 的真实签名、`ctx.inject` 的调度时机未经宿主实跑验证——这两处是装进 DSH 后才能确认的部分。
+**验证边界**：工具与闸门逻辑由 H1–H11 覆盖（假 ctx 捕获注册）；`systemPrompt.variable/section` 的真实签名、`ctx.inject` 的调度时机未经宿主实跑验证——这两处是装进 DSH 后才能确认的部分。
+
+**踩到的坑（0.5.1 修）**：直接读 `ctx.systemPrompt` 会抛 `cannot get property "variable" without inject`，包在 `try` 里也没用——取值本身就抛。正确做法是完全不碰属性，只在 `ctx.inject(['systemPrompt'], sp => …)` 回调里用 `sp`。H10 用会抛错的 getter 固化了这个约束。
 
 ---
 
