@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import { apply } from '../index.js';
 import { HostRuntime } from '../lib/host/runtime.js';
+import { SessionWatcher } from '../lib/host/session-watcher.js';
 import { TypedMemoryStore } from '../lib/core/memory-store.js';
 
 const tmpRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), 'lc-host-'));
@@ -193,6 +194,87 @@ test('H11 ctx.inject 存在但服务缺席时，不注册 section 也不抛', ()
   assert.doesNotThrow(() => apply(ctx, { rootDir: tmpRoot(), engine: { kind: 'none' } }));
   assert.equal(tools.size, 2);
   assert.equal(sections.length, 0);
+});
+
+test('H12 会话目录消失能被监听到', () => {
+  const root = tmpRoot();
+  const sessionsDir = path.join(root, 'sessions');
+  fs.mkdirSync(path.join(sessionsDir, 'ws1', 'session-a'), { recursive: true });
+  fs.mkdirSync(path.join(sessionsDir, 'ws1', 'session-b'), { recursive: true });
+
+  const removedSeen = [];
+  const watcher = new SessionWatcher({
+    sessionsDir,
+    onRemoved: (removed) => removedSeen.push(...removed),
+  });
+
+  const first = watcher.scan();
+  assert.deepEqual(first.removed, [], '首次扫描只建基线');
+  assert.equal(first.tracked, 2);
+
+  fs.rmSync(path.join(sessionsDir, 'ws1', 'session-a'), { recursive: true, force: true });
+  const second = watcher.scan();
+  assert.deepEqual(second.removed, ['ws1/session-a']);
+  assert.deepEqual(removedSeen, ['ws1/session-a']);
+});
+
+test('H13 删除会话后：释放租约并按闸门释放引擎', async () => {
+  let destroyed = 0;
+  const released = [];
+  const runtime = new HostRuntime({
+    rootDir: tmpRoot(),
+    adapter: {
+      probeEngine: async () => ({ installed: true, models: [{ name: 'm' }], slots: [] }),
+      destroyEngine: async () => {
+        destroyed++;
+      },
+    },
+    leases: { release: (id, reason) => released.push([id, reason]) },
+  });
+
+  const entry = await runtime.handleSessionsRemoved(['ws/session-xyz']);
+  assert.deepEqual(released, [['session-xyz', 'session_deleted']]);
+  assert.equal(entry.released, true);
+  assert.equal(entry.code, 'released');
+  assert.equal(destroyed, 1);
+});
+
+test('H14 无本地引擎时删除会话：不释放，但不报错', async () => {
+  const runtime = new HostRuntime({
+    rootDir: tmpRoot(),
+    adapter: { probeEngine: async () => ({ installed: false, models: [], slots: [] }) },
+  });
+  const entry = await runtime.handleSessionsRemoved(['ws/session-q']);
+  assert.equal(entry.released, false);
+  assert.equal(entry.code, 'skip_absent');
+  assert.equal(runtime.recentDeletions.length, 1);
+});
+
+test('H15 releaseOnDelete=false 时只记录不释放', async () => {
+  let destroyed = 0;
+  const runtime = new HostRuntime({
+    rootDir: tmpRoot(),
+    adapter: {
+      probeEngine: async () => ({ installed: true, models: [{ name: 'm' }], slots: [] }),
+      destroyEngine: async () => {
+        destroyed++;
+      },
+    },
+    config: { releaseOnDelete: false },
+  });
+  const entry = await runtime.handleSessionsRemoved(['ws/session-r']);
+  assert.equal(entry.code, 'release_disabled');
+  assert.equal(destroyed, 0);
+});
+
+test('H16 status 显示会话监听状态', async () => {
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, 'sessions', 'ws1', 'session-a'), { recursive: true });
+  const { ctx, tools } = makeCtx();
+  apply(ctx, { rootDir: root, config: {}, engine: { kind: 'none' }, watchIntervalMs: 60000 });
+
+  const text = await tools.get('lifecycle_cache_status').execute({}, {});
+  assert.match(text, /会话监听：跟踪 1 个/);
 });
 
 test('H8 没有 systemPrompt 服务时不抛错，且记录诊断', () => {

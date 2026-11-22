@@ -17,6 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { HostRuntime } from './lib/host/runtime.js';
 import { createStatusTool, createCleanTool } from './lib/host/tools.js';
+import { SessionWatcher } from './lib/host/session-watcher.js';
 import { createEngineAdapter } from './adapters/engine-http.js';
 
 /** 只要 tools 服务；systemPrompt 是可选的，用 ctx.inject 单独接。 */
@@ -71,10 +72,36 @@ export function apply(ctx, config = {}) {
     };
   };
 
+  const startWatcher = () => {
+    if (config.watchSessions === false) return () => {};
+    const watcher = new SessionWatcher({
+      sessionsDir: config.sessionsDir || path.join(runtime.rootDir, 'sessions'),
+      intervalMs: config.watchIntervalMs ?? 5000,
+      onRemoved: (removed) => runtime.handleSessionsRemoved(removed),
+      onError: (err) => runtime.diagnostics.push(`watcher: ${err?.message ?? err}`),
+    });
+    runtime.attachWatcher(watcher);
+    watcher.start();
+    return () => watcher.stop();
+  };
+
+  const boot = () => {
+    const disposers = [registerTools(), startWatcher()];
+    return () => {
+      for (const dispose of disposers.reverse()) {
+        try {
+          dispose?.();
+        } catch (err) {
+          runtime.diagnostics.push(`dispose: ${err?.message ?? err}`);
+        }
+      }
+    };
+  };
+
   if (typeof ctx.effect === 'function') {
-    ctx.effect(() => registerTools());
+    ctx.effect(boot);
   } else {
-    registerTools();
+    boot();
   }
 
   // systemPrompt 是**可选服务**：只能通过 ctx.inject 拿到。

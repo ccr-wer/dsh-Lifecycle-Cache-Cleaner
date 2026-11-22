@@ -40,8 +40,9 @@ patch（`cordis.patch.yml`）插入一行插件条目，入口 `index.js` 导出
 
 | 能力 | 触发方式 | 行为 |
 |---|---|---|
-| `lifecycle_cache_status` 工具 | 让模型调用，或直接说“看下缓存状态” | 只读：引擎探测结论、闸门判定、记忆用量 |
+| `lifecycle_cache_status` 工具 | 让模型调用，或直接说“看下缓存状态” | 只读：引擎探测结论、闸门判定、记忆用量、会话监听状态 |
 | `lifecycle_cache_clean` 工具 | 模型调用，`confirm: true` 才真释放 | 必经统一闸门；探测不到就不动 |
+| 删除会话后自动清理 | 自动（监听 `sessions/` 目录） | 发现会话目录消失 → 释放租约 → 经闸门尝试释放引擎 |
 | 记忆注入 | 自动 | 把共享/工作区记忆写进 system prompt（预算 1KB / 2KB） |
 
 配置写在 `cordis.patch.yml` 的插件行里：
@@ -55,7 +56,15 @@ patch（`cordis.patch.yml`）插入一行插件条目，入口 `index.js` 导出
     engine:
       kind: auto                        # auto | ollama | llamacpp | none
       baseUrl: 'http://127.0.0.1:11434'
+    releaseOnDelete: true               # 删除会话后是否经闸门释放引擎
+    watchIntervalMs: 5000               # 会话目录扫描间隔
+    watchSessions: true                 # false 则完全不开监听
 ```
+
+**宿主没有“会话已删除”事件**：删除是 UI/其它插件做的文件级操作
+（`dsh-session-manager` 就是自己 rm 目录）。所以删除链路靠监视
+`sessions/<工作区目录>/session-<uuid>/` 来实现：目录消失 → 释放租约 → 过闸门。
+清理失败不回滚删除，也不阻塞它。
 
 作为库使用：
 
@@ -118,8 +127,9 @@ Windows/Linux 采样器目前只有单元测试覆盖，没有真机显存断言
 | `index.js` | 插件入口：`apply(ctx, config)`，注册工具与记忆注入 |
 | `cordis.patch.yml` | 组合包 patch：插入一行插件条目 |
 | `locale/` `icon.svg` | 插件管理器里显示的标题、描述、图标 |
-| `lib/host/runtime.js` | 运行时：探测 → 闸门 → 释放，以及记忆文本 |
+| `lib/host/runtime.js` | 运行时：探测 → 闸门 → 释放，以及记忆文本与删除后处理 |
 | `lib/host/tools.js` | 两个模型的工具定义与文本渲染 |
+| `lib/host/session-watcher.js` | 会话目录监听（轮询，跨平台一致） |
 | `adapters/engine-http.js` | 本地引擎探测（只读 GET）与 ollama 卸载 |
 | `cleaner.js` | 主循环：tick / rebuild / onCompacted / releaseCache |
 | `session-deleter.js` | 会话删除编排（`DELETE_STATE` 九态） |
@@ -139,7 +149,7 @@ Windows/Linux 采样器目前只有单元测试覆盖，没有真机显存断言
 node --test               # 全部：108 项，106 pass / 2 skip
 ```
 
-V1–V6 日志流水线，V7–V11 引擎释放与工作区记忆，S 系列压缩接缝，I 系列闸门不变量，X 系列跨平台采样/归一/重试，M 系列记忆归属与消重，P 系列组合包清单，H 系列宿主接入。
+V1–V6 日志流水线，V7–V11 引擎释放与工作区记忆，S 系列压缩接缝，I 系列闸门不变量，X 系列跨平台采样/归一/重试，M 系列记忆归属与消重，P 系列组合包清单，H 系列宿主接入（工具、记忆注入、删除监听）。
 
 更多取舍见 [`docs/DECISIONS.md`](docs/DECISIONS.md)，压缩挂载点见 [`docs/whalebone.md`](docs/whalebone.md)。
 
