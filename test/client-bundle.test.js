@@ -112,7 +112,12 @@ test('C4 apply 注册插件页配置区、会话面板与个性化面板，并�
   mod.apply(ctx);
 
   const ids = slots.map((slot) => slot.options.id).sort();
-  assert.deepEqual(ids, ['lifecycle-cache-config', 'lifecycle-cache-profile', 'lifecycle-cache-sessions']);
+  assert.deepEqual(ids, [
+    'lifecycle-cache-config',
+    'lifecycle-cache-memory',
+    'lifecycle-cache-profile',
+    'lifecycle-cache-sessions',
+  ]);
 
   const card = slots.find((slot) => slot.options.id === 'lifecycle-cache-config');
   assert.equal(card.options.name, 'plugins.bundle.config');
@@ -120,7 +125,7 @@ test('C4 apply 注册插件页配置区、会话面板与个性化面板，并�
   assert.equal(card.options.locale, 'lifecycle-cache-cleaner');
   assert.equal(typeof card.component, 'function');
 
-  for (const id of ['lifecycle-cache-sessions', 'lifecycle-cache-profile']) {
+  for (const id of ['lifecycle-cache-sessions', 'lifecycle-cache-profile', 'lifecycle-cache-memory']) {
     const panel = slots.find((slot) => slot.options.id === id);
     assert.equal(panel.options.name, 'sidebar.footer.action');
     assert.equal(panel.options.locale, 'lifecycle-cache-cleaner');
@@ -140,6 +145,11 @@ test('C4 apply 注册插件页配置区、会话面板与个性化面板，并�
   assert.equal(dict.en['profile.button'], 'Personalize');
   assert.equal(dict.zh['profile.style.concise'], '简洁');
   assert.ok(dict.zh['profile.save'], '缺保存文案');
+  assert.equal(dict.zh['memory.button'], '记忆');
+  assert.equal(dict.en['memory.button'], 'Memory');
+  assert.equal(dict.zh['memory.tab.shared'], '共享记忆');
+  assert.ok(dict.zh['memory.add'], '缺添加文案');
+  assert.ok(dict.zh['memory.docSave'], '缺文档保存文案');
   for (const key of ['skip_absent', 'skip_unknown', 'skip_no_lease', 'skip_foreign', 'no_destroy']) {
     assert.ok(dict.zh[`gate.${key}`], `缺中文文案 gate.${key}`);
     assert.ok(dict.en[`gate.${key}`], `缺英文文案 gate.${key}`);
@@ -210,4 +220,19 @@ test('C9 个性化面板收起时只有一个入口按钮，不渲染表单', ()
   assert.equal(buttons[0].children[0].children[0], 'Personalize');
   assert.equal(findAll(tree, (node) => node.props['data-lc-profile'] === '1').length, 0, '收起时不该有表单');
   assert.equal(findAll(tree, (node) => node.props['data-lc-field']).length, 0, '收起时不该有字段');
+});
+
+test('C10 记忆面板收起时只有一个入口按钮，不渲染列表或编辑器', () => {
+  const { mod } = loadBundle();
+  const { ctx, slots } = makeClientCtx();
+  mod.apply(ctx);
+  const Panel = slots.find((slot) => slot.options.id === 'lifecycle-cache-memory').component;
+
+  const tree = Panel({ wide: true, t: (key) => key });
+  const buttons = findAll(tree, (node) => node.type === 'button');
+  assert.equal(buttons.length, 1, '收起状态只有一个入口按钮');
+  assert.equal(buttons[0].props['data-lc-action'], 'open-memory');
+  assert.equal(buttons[0].children[0].children[0], 'Memory');
+  assert.equal(findAll(tree, (node) => node.props['data-lc-memory'] === '1').length, 0, '收起时不该有对话框');
+  assert.equal(findAll(tree, (node) => node.props['data-lc-field']).length, 0, '收起时不该有编辑区');
 });

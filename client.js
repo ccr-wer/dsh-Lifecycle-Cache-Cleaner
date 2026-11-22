@@ -91,6 +91,35 @@ window.__ModuleLoader__.load({
       'profile.style.default': '默认',
       'profile.style.concise': '简洁',
       'profile.style.detailed': '详细',
+      'memory.button': '记忆',
+      'memory.title': '记忆（用户可编辑）',
+      'memory.hint': '共享记忆所有工作区都能读到；工作区记忆只属于当前工作区。保存后会进入 system prompt。',
+      'memory.tab.shared': '共享记忆',
+      'memory.tab.workspace': '本工作区',
+      'memory.sharedEmpty': '还没有共享记忆。',
+      'memory.workspaceEmpty': '这个工作区还没有条目记忆。',
+      'memory.addPlaceholder': '写一条要记住的事实，例如：发布前必须跑完整测试套件',
+      'memory.add': '添加',
+      'memory.saving': '保存中…',
+      'memory.saved': '已保存。',
+      'memory.error': '操作失败：{message}',
+      'memory.delete': '删除',
+      'memory.confirmDelete': '确认删除',
+      'memory.cancel': '取消',
+      'memory.author.user': '你写的',
+      'memory.author.model': '模型提议',
+      'memory.author.promoted': '自动升级',
+      'memory.conflict': '与另一条冲突',
+      'memory.updated': '更新于 {time}',
+      'memory.budget': '注入预算：共享 {shared}B / 工作区 {workspace}B',
+      'memory.docLabel': '本工作区记忆文档（整段 Markdown，随工作区走）',
+      'memory.docPlaceholder': '这个工作区的长期约定、环境事实、注意事项……',
+      'memory.docSave': '保存文档',
+      'memory.docEmpty': '还没有文档。写点东西再保存。',
+      'memory.archive': '归档',
+      'memory.archiveConfirm': '确认归档',
+      'memory.archived': '已归档（移到 memory/.archive，可人工恢复）。',
+      'memory.workspace': '工作区：{key}',
     };
 
     const en = {
@@ -160,6 +189,35 @@ window.__ModuleLoader__.load({
       'profile.style.default': 'Default',
       'profile.style.concise': 'Concise',
       'profile.style.detailed': 'Detailed',
+      'memory.button': 'Memory',
+      'memory.title': 'Memory (you can edit)',
+      'memory.hint': 'Shared memory is readable from every workspace; workspace memory belongs to this one. Saving puts it into the system prompt.',
+      'memory.tab.shared': 'Shared',
+      'memory.tab.workspace': 'This workspace',
+      'memory.sharedEmpty': 'No shared memory yet.',
+      'memory.workspaceEmpty': 'No workspace entries yet.',
+      'memory.addPlaceholder': 'One fact worth remembering, e.g. always run the full test suite before publishing',
+      'memory.add': 'Add',
+      'memory.saving': 'Saving…',
+      'memory.saved': 'Saved.',
+      'memory.error': 'Failed: {message}',
+      'memory.delete': 'Delete',
+      'memory.confirmDelete': 'Confirm delete',
+      'memory.cancel': 'Cancel',
+      'memory.author.user': 'You',
+      'memory.author.model': 'Model proposal',
+      'memory.author.promoted': 'Promoted',
+      'memory.conflict': 'Conflicts with another entry',
+      'memory.updated': 'Updated {time}',
+      'memory.budget': 'Prompt budget: shared {shared}B / workspace {workspace}B',
+      'memory.docLabel': 'Workspace memory document (whole Markdown, travels with the workspace)',
+      'memory.docPlaceholder': 'Long-lived conventions, environment facts, gotchas for this workspace…',
+      'memory.docSave': 'Save document',
+      'memory.docEmpty': 'No document yet. Write something first.',
+      'memory.archive': 'Archive',
+      'memory.archiveConfirm': 'Confirm archive',
+      'memory.archived': 'Archived to memory/.archive (recoverable by hand).',
+      'memory.workspace': 'Workspace: {key}',
     };
 
     const CSS = [
@@ -220,6 +278,19 @@ window.__ModuleLoader__.load({
       '.lc-input:focus,.lc-select:focus,.lc-textarea:focus{outline:none;border-color:var(--dsw-alias-border-selected,#247bbf)}',
       '.lc-formActions{display:flex;align-items:center;gap:8px;padding-top:2px}',
       '.lc-formHint{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#888)}',
+      // 记忆面板
+      '.lc-tabs{display:flex;gap:6px;margin:2px 0 10px}',
+      '.lc-tab{box-sizing:border-box;height:28px;padding:0 12px;border:1px solid var(--dsw-alias-border-l2,#ccc);',
+      'border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary,#555);font-size:12px;cursor:pointer}',
+      '.lc-tabActive{border-color:var(--dsw-alias-border-selected,#247bbf);color:var(--dsw-alias-label-primary,#111)}',
+      '.lc-entry{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--dsw-alias-border-l2,#eee)}',
+      '.lc-entry:last-child{border-bottom:none}',
+      '.lc-entryText{flex:1 1 auto;min-width:0;font-size:13px;line-height:19px;white-space:pre-wrap;word-break:break-word;',
+      'color:var(--dsw-alias-label-primary,#111)}',
+      '.lc-entryMeta{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#888)}',
+      '.lc-tag{display:inline-block;margin-left:6px;padding:0 5px;border-radius:4px;font-size:10px;line-height:15px;',
+      'border:1px solid var(--dsw-alias-border-l2,#ccc);color:var(--dsw-alias-label-tertiary,#777)}',
+      '.lc-add{display:flex;flex-direction:column;gap:6px;padding:8px 0 4px}',
     ].join('');
 
     /** 只替换 `{name}`；locale 服务自身通常也会插值，这里兜底。 */
@@ -909,6 +980,353 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // ------------------------------------------------------------ 记忆面板
+
+    /**
+     * 共享记忆 / 工作区记忆的编辑面板。
+     *
+     * 与「个性化」的区别：记忆是条目化的（去重、取代、冲突都有规则），
+     * 这里只是把**用户**这条写入路径接通：条目写入走 `addUserEntry`（归属听用户的），
+     * 工作区整段文档走 `WorkspaceMemoryStore.write`（同样要求 confirmed）。
+     * 模型的写入口没有变化，仍然只有 `propose`。
+     */
+    function MemoryPanel(props) {
+      const textRef = React.useRef(null);
+      textRef.current = makeText(props);
+      const t = textRef.current;
+      const [open, setOpen] = React.useState(false);
+      const [tab, setTab] = React.useState('shared');
+      const [data, setData] = React.useState(null);
+      const [phase, setPhase] = React.useState('idle');
+      const [entryDraft, setEntryDraft] = React.useState('');
+      const [docDraft, setDocDraft] = React.useState('');
+      const [busy, setBusy] = React.useState(false);
+      const [notice, setNotice] = React.useState(null);
+      const [pendingId, setPendingId] = React.useState(null);
+      const [archivePending, setArchivePending] = React.useState(false);
+      const alive = React.useRef(true);
+
+      React.useEffect(() => {
+        alive.current = true;
+        return () => {
+          alive.current = false;
+        };
+      }, []);
+
+      const load = React.useCallback(async () => {
+        setPhase('loading');
+        try {
+          const result = await request('GET', '/memory');
+          if (!alive.current) return;
+          setData(result);
+          setDocDraft(result?.doc ?? '');
+          setPhase('ready');
+        } catch (error) {
+          if (alive.current) {
+            setPhase('error');
+            setNotice({ ok: false, text: textRef.current('memory.error', { message: messageOf(error) }) });
+          }
+        }
+      }, []);
+
+      React.useEffect(() => {
+        if (!open) return undefined;
+        void load();
+        const onKey = (event) => {
+          if (event.key === 'Escape') setOpen(false);
+        };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+      }, [open, load]);
+
+      /** 统一的“执行 → 提示 → 重读”包装，避免每个动作写一遍 try/catch。 */
+      const act = React.useCallback(async (work, okText) => {
+        setBusy(true);
+        setNotice(null);
+        try {
+          const message = await work();
+          if (alive.current) setNotice({ ok: true, text: okText ?? message ?? textRef.current('memory.saved') });
+          await load();
+        } catch (error) {
+          if (alive.current) {
+            setNotice({ ok: false, text: textRef.current('memory.error', { message: messageOf(error) }) });
+          }
+        } finally {
+          if (alive.current) setBusy(false);
+        }
+      }, [load]);
+
+      const addEntry = () =>
+        act(async () => {
+          const text = entryDraft.trim();
+          if (!text) throw new Error('内容不能为空');
+          await request('POST', '/memory/entry', { scope: tab, text });
+          if (alive.current) setEntryDraft('');
+        });
+
+      const removeEntry = (id) =>
+        act(async () => {
+          await request('POST', '/memory/entry/remove', { id, confirm: true });
+          if (alive.current) setPendingId(null);
+        });
+
+      const saveDoc = () =>
+        act(async () => {
+          await request('PUT', '/memory/doc', { text: docDraft });
+        });
+
+      const archiveDoc = () =>
+        act(async () => {
+          await request('POST', '/memory/doc/archive', { confirm: true });
+          if (alive.current) setArchivePending(false);
+        }, t('memory.archived'));
+
+      const authorLabel = (author) => {
+        if (author === 'user') return t('memory.author.user');
+        if (author === 'promoted') return t('memory.author.promoted');
+        return t('memory.author.model');
+      };
+
+      const entries = data ? (tab === 'shared' ? data.shared : data.workspace) : [];
+
+      const entryRow = (entry) => {
+        const pending = pendingId === entry.id;
+        const meta = [
+          authorLabel(entry.author),
+          t('memory.updated', { time: formatTime(entry.updatedAt) }),
+          entry.conflict ? t('memory.conflict') : null,
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        return h(
+          'div',
+          { className: 'lc-entry', key: entry.id, 'data-lc-entry': entry.id },
+          h(
+            'div',
+            { className: 'lc-rowMain' },
+            h('div', { className: 'lc-entryText' }, entry.text),
+            h('div', { className: 'lc-entryMeta' }, meta),
+          ),
+          h(
+            'div',
+            { className: 'lc-rowActions' },
+            pending
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'lc-btn lc-danger',
+                    disabled: busy,
+                    onClick: () => void removeEntry(entry.id),
+                    'data-lc-action': 'confirm-remove-entry',
+                  },
+                  t('memory.confirmDelete'),
+                )
+              : h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'lc-btn lc-danger',
+                    disabled: busy,
+                    onClick: () => {
+                      setPendingId(entry.id);
+                      setNotice(null);
+                    },
+                    'data-lc-action': 'remove-entry',
+                  },
+                  t('memory.delete'),
+                ),
+            pending
+              ? h('button', { type: 'button', className: 'lc-btn', disabled: busy, onClick: () => setPendingId(null) }, t('memory.cancel'))
+              : null,
+          ),
+        );
+      };
+
+      const docEditor =
+        tab !== 'workspace'
+          ? null
+          : h(
+              'div',
+              { className: 'lc-form' },
+              h('span', { className: 'lc-label' }, t('memory.docLabel')),
+              h('textarea', {
+                className: 'lc-textarea',
+                value: docDraft,
+                placeholder: t('memory.docPlaceholder'),
+                onChange: (event) => setDocDraft(event && event.target ? event.target.value : ''),
+                'data-lc-field': 'memory-doc',
+                style: { minHeight: '120px' },
+              }),
+              h(
+                'div',
+                { className: 'lc-formActions' },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'lc-btn lc-primary',
+                    disabled: busy,
+                    onClick: () => void saveDoc(),
+                    'data-lc-action': 'save-doc',
+                  },
+                  t('memory.docSave'),
+                ),
+                archivePending
+                  ? h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'lc-btn lc-danger',
+                        disabled: busy,
+                        onClick: () => void archiveDoc(),
+                        'data-lc-action': 'confirm-archive-doc',
+                      },
+                      t('memory.archiveConfirm'),
+                    )
+                  : h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'lc-btn',
+                        disabled: busy,
+                        onClick: () => setArchivePending(true),
+                        'data-lc-action': 'archive-doc',
+                      },
+                      t('memory.archive'),
+                    ),
+                archivePending
+                  ? h('button', { type: 'button', className: 'lc-btn', disabled: busy, onClick: () => setArchivePending(false) }, t('memory.cancel'))
+                  : null,
+              ),
+            );
+
+      const dialog = !open
+        ? null
+        : h(
+            'div',
+            { className: 'lc-scrim', role: 'presentation' },
+            h(
+              'div',
+              {
+                className: 'lc-dialog',
+                role: 'dialog',
+                'aria-modal': 'true',
+                'aria-label': t('memory.title'),
+                'data-lc-memory': '1',
+              },
+              h(
+                'div',
+                { className: 'lc-dialogHead' },
+                h('span', { className: 'lc-title' }, t('memory.title')),
+                h(
+                  'span',
+                  { className: 'lc-actions' },
+                  h(
+                    'button',
+                    { type: 'button', className: 'lc-btn', onClick: () => void load(), disabled: busy || phase === 'loading' },
+                    t('panel.refresh'),
+                  ),
+                  h('button', { type: 'button', className: 'lc-btn', onClick: () => setOpen(false) }, t('panel.close')),
+                ),
+              ),
+              h(
+                'div',
+                { className: 'lc-dialogBody' },
+                h('p', { className: 'lc-hint' }, t('memory.hint')),
+                data
+                  ? h(
+                      'p',
+                      { className: 'lc-formHint' },
+                      [
+                        t('memory.workspace', { key: String(data.workspaceId ?? '').split(/[\\/]/).pop() || '—' }),
+                        t('memory.budget', { shared: data.budget?.sharedBytes ?? 0, workspace: data.budget?.workspaceBytes ?? 0 }),
+                      ].join(' · '),
+                    )
+                  : null,
+                notice
+                  ? h(
+                      'p',
+                      { className: `lc-status ${notice.ok ? 'lc-statusOk' : 'lc-statusError'}`, role: 'status' },
+                      notice.text,
+                    )
+                  : null,
+                h(
+                  'div',
+                  { className: 'lc-tabs' },
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: tab === 'shared' ? 'lc-tab lc-tabActive' : 'lc-tab',
+                      onClick: () => setTab('shared'),
+                      'data-lc-action': 'tab-shared',
+                    },
+                    t('memory.tab.shared'),
+                  ),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: tab === 'workspace' ? 'lc-tab lc-tabActive' : 'lc-tab',
+                      onClick: () => setTab('workspace'),
+                      'data-lc-action': 'tab-workspace',
+                    },
+                    t('memory.tab.workspace'),
+                  ),
+                ),
+                docEditor,
+                h(
+                  'div',
+                  { className: 'lc-add' },
+                  h('textarea', {
+                    className: 'lc-textarea',
+                    value: entryDraft,
+                    placeholder: t('memory.addPlaceholder'),
+                    onChange: (event) => setEntryDraft(event && event.target ? event.target.value : ''),
+                    'data-lc-field': 'memory-entry',
+                    style: { minHeight: '56px' },
+                  }),
+                  h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'lc-btn',
+                      disabled: busy || entryDraft.trim() === '',
+                      onClick: () => void addEntry(),
+                      'data-lc-action': 'add-entry',
+                    },
+                    t('memory.add'),
+                  ),
+                ),
+                phase === 'loading' ? h('p', { className: 'lc-status' }, t('panel.loading')) : null,
+                phase === 'ready' && entries.length === 0
+                  ? h('p', { className: 'lc-status' }, tab === 'shared' ? t('memory.sharedEmpty') : t('memory.workspaceEmpty'))
+                  : null,
+                phase === 'ready' ? entries.map(entryRow) : null,
+              ),
+            ),
+          );
+
+      return h(
+        'div',
+        { className: 'lc-navWrap' },
+        h('style', null, CSS),
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'lc-nav',
+            onClick: () => setOpen(true),
+            title: t('memory.title'),
+            'data-lc-action': 'open-memory',
+          },
+          h('span', null, t('memory.button')),
+        ),
+        dialog,
+      );
+    }
+
     // ------------------------------------------------------------ 插件接线
 
     function apply(ctx) {
@@ -955,6 +1373,19 @@ window.__ModuleLoader__.load({
             locale: NS,
           },
           ProfilePanel,
+        ),
+      );
+
+      // 记忆：共享 / 本工作区两层。用户的写入路径与模型的 propose 是两条独立入口。
+      ctx.slots.inject('sidebar.footer.action', () =>
+        ctx.slots.register(
+          {
+            name: 'sidebar.footer.action',
+            id: 'lifecycle-cache-memory',
+            order: 42,
+            locale: NS,
+          },
+          MemoryPanel,
         ),
       );
     }
