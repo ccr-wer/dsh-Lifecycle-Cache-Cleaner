@@ -1,0 +1,3 @@
+- insert:
+    - id: lifecycle-cache-cleaner
+      name: 'dsh-lifecycle-cache-cleaner'

@@ -30,11 +30,22 @@ DSH 本地 Agent 的 KV cache 生命周期管理（单包）。
 
 要求 Node >= 18.17。
 
-1. 把包放进 DSH 插件目录，或 `npm install dsh-lifecycle-cache-cleaner`
-2. 适配器至少实现 `probeEngine()` 与 `destroyEngine()`；前者返回
+本包同时是一个**可安装的 DSH 组合包**：`package.json` 声明了 `dsh.bundle.patch`，
+patch（`cordis.patch.yml`）插入一行插件条目，入口 `index.js` 导出 `apply(ctx, config)`。
+
+安装：**Plugins → Add plugin** 选本目录，或让插件管理器执行 `install_bundle`。
+从 npm 装同理——`npm install dsh-lifecycle-cache-cleaner` 后以目录方式添加。
+
+**当前状态**：插件能装、能在插件列表里看到，但 `apply()` 不注册任何宿主钩子。
+`adapters/dsh.js` 的宿主 API 尚未接入（DECISIONS 的 T10），所以清理一律 `skip_unknown`，
+不释放任何引擎——这是有意的，不猜接口。
+
+作为库使用：
+
+1. 适配器至少实现 `probeEngine()` 与 `destroyEngine()`；前者返回
    `owned_idle | owned_busy | foreign | absent`，抛错即视为 `unknown`
-3. 会话创建时登记 `engine_ref`（租约），删除时只校验、不推断
-4. 跑 `node --test` 确认 108 项通过
+2. 会话创建时登记 `engine_ref`（租约），删除时只校验、不推断
+3. 跑 `node --test` 确认全部通过
 
 不实现 `probeEngine()` 也能装——代价是永远 `skip_unknown`，什么都不清理。
 
@@ -87,6 +98,9 @@ Windows/Linux 采样器目前只有单元测试覆盖，没有真机显存断言
 
 | 路径 | 职责 |
 |---|---|
+| `index.js` | 插件入口：`apply(ctx, config)`；同时重新导出库接口 |
+| `cordis.patch.yml` | 组合包 patch：插入一行插件条目 |
+| `locale/` `icon.svg` | 插件管理器里显示的标题、描述、图标 |
 | `cleaner.js` | 主循环：tick / rebuild / onCompacted / releaseCache |
 | `session-deleter.js` | 会话删除编排（`DELETE_STATE` 九态） |
 | `lib/core/release-gate.js` | 统一清理闸门（探测 + 放行判定） |
@@ -105,7 +119,7 @@ Windows/Linux 采样器目前只有单元测试覆盖，没有真机显存断言
 node --test               # 全部：108 项，106 pass / 2 skip
 ```
 
-V1–V6 日志流水线，V7–V11 引擎释放与工作区记忆，S 系列压缩接缝，I 系列闸门不变量，X 系列跨平台采样/归一/重试，M 系列记忆归属与消重。
+V1–V6 日志流水线，V7–V11 引擎释放与工作区记忆，S 系列压缩接缝，I 系列闸门不变量，X 系列跨平台采样/归一/重试，M 系列记忆归属与消重，P 系列组合包清单。
 
 更多取舍见 [`docs/DECISIONS.md`](docs/DECISIONS.md)，压缩挂载点见 [`docs/whalebone.md`](docs/whalebone.md)。
 

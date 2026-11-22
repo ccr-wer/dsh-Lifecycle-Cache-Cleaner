@@ -249,6 +249,24 @@ GitHub 仓库名不改（本来就对）。
 
 ---
 
+## D17. 作为 DSH 组合包发布（而不是只当一个库）
+
+**背景**：把包放进 DSH 目录直接报 `declares no dsh.bundle`——宿主的判定是“`package.json` 里有 `dsh.bundle.patch` 的才叫组合包”（原文见 `dsh-doc/references/host-plugin.md`）。此前我们只有库，没有清单，README 却说“放进插件目录即可”，是错的。
+
+**决策**：补最小可安装骨架，但不伪造能力。
+
+- `package.json`：`dsh.bundle.patch` → `./cordis.patch.yml`；`main` 改 `index.js`；补 `icon`、`exports`（locale / icon / patch / 库子路径）；`files` 覆盖全部运行资源
+- `cordis.patch.yml`：单条 `insert`，`id: lifecycle-cache-cleaner`
+- `index.js`：导出 `apply(ctx, config)`，**只打一行诊断日志，不注册任何钩子**；同时 `export *` 保留原库接口
+- `locale/en.json`、`locale/zh.json`：`meta.title` + `meta.description`，描述里写明“引擎释放尚未接入宿主 API，清理一律跳过”
+- 不声明 `dsh.bundle.platforms`：本包是跨平台的，省略即全平台
+
+`apply()` 留空的理由与 T10 一致：注册哪个钩子取决于宿主真实的会话/压缩/引擎 API，未确认就不填。空实现 + 诚实描述，好过猜接口的假实现。
+
+清单合规性由 `test/manifest.test.js`（P1–P6）持续守住——包括 patch 语法、exports 指向、icon 尺寸、locale 字段、`files` 覆盖面。
+
+---
+
 ## T11. 非 macOS 尚未做过真机显存断言
 
 采样器补齐后，Windows/Linux 的解析逻辑有单元测试覆盖，但**没有在真机上验证过“删除会话 -> 显存真的掉下来”**。V2/V2b 在非 macOS 上 skip，这是目前唯一跑过真实下降断言的平台。
