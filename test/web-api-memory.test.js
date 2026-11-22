@@ -103,8 +103,28 @@ test('Y1b 宿主登记的工作区即使还没有记忆，也会自动成组', a
   const body = (await call(route, makeReq())).json().result;
   const ids = body.workspaces.map((group) => group.id).sort();
   assert.deepEqual(ids, ['C:\\proj\\alpha', 'C:\\proj\\beta']);
-  assert.equal(body.workspaces.find((g) => g.id === 'C:\\proj\\alpha').label, 'alpha');
+  assert.equal(body.workspaces.find((g) => g.id === 'C:\\proj\\alpha').label, 'Alpha', '有宿主标题就用标题');
   assert.equal(body.workspaces.find((g) => g.id === 'C:\\proj\\alpha').title, 'Alpha');
+  assert.equal(body.workspaces.find((g) => g.id === 'C:\\proj\\beta').label, 'beta', '没标题退回路径最后一段');
+});
+
+test('Y1c 显示名优先用宿主标题；同名的补父目录后缀', async () => {
+  const { runtime } = makeRuntime();
+  const route = captureRoute(runtime, {
+    listWorkspaces: () => [
+      { id: 'w1', path: 'C:\\work\\deepseek-harness\\default-workspace', title: '主工作区' },
+      { id: 'w2', path: 'C:\\other\\one\\default-workspace' },
+      { id: 'w3', path: 'D:\\data\\two\\default-workspace' },
+      { id: 'w4', path: 'C:\\proj\\beta' },
+    ],
+  });
+
+  const labels = (await call(route, makeReq())).json().result.workspaces.map((g) => g.label);
+  assert.ok(labels.includes('主工作区'), '有 title 用 title，不再显示路径最后一段');
+  assert.ok(labels.includes('default-workspace (one)'), '同名补父目录');
+  assert.ok(labels.includes('default-workspace (two)'), '另一个同名补另一个父目录');
+  assert.ok(labels.includes('beta'), '不重名保持原样');
+  assert.equal(new Set(labels).size, labels.length, '显示名不能重复');
 });
 
 test('Y2 POST /memory/entry 分别写两层，并回条目', async () => {

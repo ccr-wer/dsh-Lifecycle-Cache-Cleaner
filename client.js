@@ -1225,7 +1225,7 @@ window.__ModuleLoader__.load({
           ),
         );
 
-      const groupHead = (key, label, counts, isCurrent) =>
+      const groupHead = (key, label, counts, isCurrent, tooltip) =>
         h(
           'button',
           {
@@ -1234,6 +1234,8 @@ window.__ModuleLoader__.load({
             onClick: () => toggle(key),
             'aria-expanded': expanded[key] === true ? 'true' : 'false',
             'data-lc-group': key,
+            // 悬停显示完整路径：显示名可能被截断或被同名目录加过后缀。
+            title: tooltip ?? label,
           },
           h('span', { className: 'lc-caret' }, expanded[key] ? '▾' : '▸'),
           h('span', { className: 'lc-groupLabel' }, label),
@@ -1268,7 +1270,7 @@ window.__ModuleLoader__.load({
         return h(
           'div',
           { className: 'lc-group', key: group.id },
-          groupHead(group.id, group.label || group.id, { entries: group.entries.length, pending: group.pending.length }, isCurrent),
+          groupHead(group.id, group.label || group.id, { entries: group.entries.length, pending: group.pending.length }, isCurrent, group.title ? `${group.label} — ${group.id}` : group.id),
           open
             ? h(
                 'div',
