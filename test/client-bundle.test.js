@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+﻿import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -106,16 +106,22 @@ test('C3 工厂返回的 apply/inject 不 import 任何 @deepseek-ai/* 运行时
   assert.equal(/from\s+['"]@deepseek-ai/.test(clientSource), false, '不允许 import 宿主 Client 包');
 });
 
-test('C4 apply 注册插件页配置区（key = 包名）与中英文字典', () => {
+test('C4 apply 注册插件页配置区与会话面板，并注册中英文字典', () => {
   const { mod } = loadBundle();
   const { ctx, slots, dictionaries } = makeClientCtx();
   mod.apply(ctx);
 
-  assert.equal(slots.length, 1);
-  assert.equal(slots[0].options.name, 'plugins.bundle.config');
-  assert.equal(slots[0].options.key, pkg.name);
-  assert.equal(slots[0].options.locale, 'lifecycle-cache-cleaner');
-  assert.equal(typeof slots[0].component, 'function');
+  const names = slots.map((slot) => slot.options.name).sort();
+  assert.deepEqual(names, ['plugins.bundle.config', 'sidebar.footer.action']);
+
+  const card = slots.find((slot) => slot.options.name === 'plugins.bundle.config');
+  assert.equal(card.options.key, pkg.name);
+  assert.equal(card.options.locale, 'lifecycle-cache-cleaner');
+  assert.equal(typeof card.component, 'function');
+
+  const panel = slots.find((slot) => slot.options.name === 'sidebar.footer.action');
+  assert.equal(panel.options.locale, 'lifecycle-cache-cleaner');
+  assert.equal(typeof panel.component, 'function');
 
   const dict = dictionaries.get('lifecycle-cache-cleaner');
   assert.ok(dict, '字典没注册');
@@ -123,17 +129,20 @@ test('C4 apply 注册插件页配置区（key = 包名）与中英文字典', ()
   assert.equal(dict.en['card.title'], 'Lifecycle cache');
   assert.equal(dict.zh['card.release'], '释放引擎');
   assert.equal(dict.en['card.release'], 'Release engine');
+  assert.equal(dict.zh['panel.delete'], '删除');
+  assert.equal(dict.en['panel.delete'], 'Delete');
+  assert.ok(dict.zh['panel.confirm'], '缺中文确认文案');
   for (const key of ['skip_absent', 'skip_unknown', 'skip_no_lease', 'skip_foreign', 'no_destroy']) {
     assert.ok(dict.zh[`gate.${key}`], `缺中文文案 gate.${key}`);
     assert.ok(dict.en[`gate.${key}`], `缺英文文案 gate.${key}`);
   }
 });
 
-test('C5 页面视图渲染出状态行与两个按钮；未拿到状态时释放按钮禁用', () => {
+test('C5 状态卡渲染出状态行与两个按钮；未拿到状态时释放按钮禁用', () => {
   const { mod } = loadBundle();
   const { ctx, slots } = makeClientCtx();
   mod.apply(ctx);
-  const Card = slots[0].component;
+  const Card = slots.find((slot) => slot.options.name === 'plugins.bundle.config').component;
 
   const tree = Card({ view: 'page', t: (key) => key });
   const buttons = findAll(tree, (node) => node.type === 'button');
@@ -149,11 +158,11 @@ test('C5 页面视图渲染出状态行与两个按钮；未拿到状态时释�
   assert.match(meta[0].children[0], /Loading/);
 });
 
-test('C6 summary 视图只回一行文本，不渲染按钮', () => {
+test('C6 状态卡 summary 视图只回一行文本，不渲染按钮', () => {
   const { mod } = loadBundle();
   const { ctx, slots } = makeClientCtx();
   mod.apply(ctx);
-  const Card = slots[0].component;
+  const Card = slots.find((slot) => slot.options.name === 'plugins.bundle.config').component;
 
   const tree = Card({ view: 'summary', t: (key) => key });
   assert.equal(tree.type, 'span');
@@ -164,4 +173,18 @@ test('C7 浏览器端 API 前缀与 Host 路由一致', () => {
   const match = clientSource.match(/const API = '([^']+)'/);
   assert.ok(match, 'client.js 里找不到 API 常量');
   assert.equal(match[1], ROUTE_BASE);
+});
+
+test('C8 会话面板收起时只渲染入口按钮，不渲染对话框', () => {
+  const { mod } = loadBundle();
+  const { ctx, slots } = makeClientCtx();
+  mod.apply(ctx);
+  const Panel = slots.find((slot) => slot.options.name === 'sidebar.footer.action').component;
+
+  const tree = Panel({ wide: true, t: (key) => key });
+  const buttons = findAll(tree, (node) => node.type === 'button');
+  assert.equal(buttons.length, 1, '收起状态只有一个入口按钮');
+  assert.equal(buttons[0].props['data-lc-action'], 'open-sessions');
+  assert.equal(buttons[0].children[0].children[0], 'Sessions');
+  assert.equal(findAll(tree, (node) => node.props['data-lc-sessions'] === '1').length, 0, '收起时不该有对话框');
 });

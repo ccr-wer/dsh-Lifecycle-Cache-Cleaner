@@ -5,11 +5,12 @@
  * bundle 的 `package.json` 声明 `dsh.bundle.patch`，patch 里 insert 本包名，
  * 宿主据此加载本模块，期望导出 `apply(ctx, config)`。
  *
- * 实际能力（四个，全部可验证）：
+ * 实际能力（五个，全部可验证）：
  *   1. `lifecycle_cache_status` 工具 —— 引擎探测 + 闸门结论 + 记忆用量，只读
  *   2. `lifecycle_cache_clean` 工具 —— 经统一闸门释放引擎（需 confirm）
  *   3. system prompt 记忆注入 —— 共享/工作区记忆进模型上下文
- *   4. 插件页 UI 的 HTTP 面 —— `client.js` 读状态、按按钮释放（仍走同一个 runtime）
+ *   4. 插件页状态卡 —— 读状态、按按钮释放（仍走同一个 runtime）
+ *   5. 侧栏「会话」面板 —— 列出会话、把选中的会话移到回收站（不 rm）
  *
  * 不 import 任何 `@deepseek-ai/*` 包：profile 里解析不到宿主包，
  * 一切通过注入的 ctx 与 config 访问。
@@ -30,6 +31,7 @@ function resolveRootDir(config) {
 }
 
 export function apply(ctx, config = {}) {
+  const sessionsDir = config.sessionsDir || path.join(resolveRootDir(config), 'sessions');
   const runtime = new HostRuntime({
     rootDir: resolveRootDir(config),
     workspaceId: config.workspaceId ?? process.cwd(),
@@ -77,7 +79,7 @@ export function apply(ctx, config = {}) {
   const startWatcher = () => {
     if (config.watchSessions === false) return () => {};
     const watcher = new SessionWatcher({
-      sessionsDir: config.sessionsDir || path.join(runtime.rootDir, 'sessions'),
+      sessionsDir,
       intervalMs: config.watchIntervalMs ?? 5000,
       onRemoved: (removed) => runtime.handleSessionsRemoved(removed),
       onError: (err) => runtime.diagnostics.push(`watcher: ${err?.message ?? err}`),
@@ -119,7 +121,7 @@ export function apply(ctx, config = {}) {
     runtime.diagnostics.push('ctx.inject 不可用，跳过记忆注入');
   }
 
-  // 插件页 UI 的 HTTP 面：同样只能靠 ctx.inject 等 webServer/connection 上线。
+  // UI 的 HTTP 面：同样只能靠 ctx.inject 等 webServer/connection 上线。
   // `ctx.get` 用来判断“这是不是真正的 Cordis Context”——纯对象假 ctx（测试）
   // 没有 get()，也没有可选服务解析能力，此时不注册第二条 inject，
   // 免得既有测试的 inject 调用序列被改变。
@@ -129,6 +131,9 @@ export function apply(ctx, config = {}) {
         runtime,
         webServer: webCtx.webServer,
         connection: webCtx.connection,
+        sessionsDir,
+        trashDir: path.join(runtime.rootDir, 'lifecycle-cache', 'trash'),
+        minIdleMs: config.sessionDeleteMinIdleMs ?? 120000,
       });
       ctx.effect(() => dispose);
     });

@@ -2,13 +2,14 @@
 
 DSH 本地 Agent 的 KV cache 生命周期管理（单包）。
 
-五件事：
+六件事：
 
 - **入口闸门**：单条工具输出过大 / 插入后水位越界 → 落盘，不调模型。
 - **工作日志固化**：摘要 → L5 校验（一致性）→ L6 原子提交（失败即回滚）。
 - **统一清理闸门**：所有清理路径共用一条规则——**探测不到本地部署就不动引擎**。
 - **记忆分层**：工作区 / 共享两层；模型只提议、归属由程序裁决；写入前消重，≥2 工作区自动升级；删光会话不删记忆，归档可撤销。
 - **插件页状态卡**：一行状态 + 一个「释放引擎」按钮；读的是同一个 `runtime`，走的还是同一道闸门。
+- **侧栏会话面板**：列出会话，删除 = 把会话目录移到回收站（可按回），最近有写入的会话拒绝删除。
 
 ## 一条最重要的规则
 
@@ -46,6 +47,7 @@ patch（`cordis.patch.yml`）插入一行插件条目，入口 `index.js` 导出
 | 删除会话后自动清理 | 自动（监听 `sessions/` 目录） | 发现会话目录消失 → 释放租约 → 经闸门尝试释放引擎 |
 | 记忆注入 | 自动 | 把共享/工作区记忆写进 system prompt（预算 1KB / 2KB） |
 | 插件页状态卡 | **Plugins → 本插件** | 一行状态 + 「释放引擎」按钮；按钮禁用时给出 `skip_*` 原因 |
+| 侧栏「会话」面板 | 侧栏底部 → 会话 | 列出会话；删除 = 移到回收站，最近有写入的拒绝 |
 
 配置写在 `cordis.patch.yml` 的插件行里：
 
@@ -96,8 +98,51 @@ patch（`cordis.patch.yml`）插入一行插件条目，入口 `index.js` 导出
 - **按钮语义**：闸门不放行时按钮禁用，并显示 `skip_absent` / `skip_unknown` /
   `skip_no_lease` / `skip_foreign` / `no_destroy` 的原因；点一次只提交一次
   `confirm: true`，返回 `released: false` 就照实显示，不伪造“已释放”。
-- **不做的事**：不提供删除会话入口（删除归宿主 / `dsh-session-manager`），
-  不在 Client 里删任何文件。
+- **不做的事**：不在浏览器里删任何文件；删除请求只到 Host，由
+  `lib/host/session-store.js` 做路径收敛和移动（见下一节）。
+
+## 会话面板（删除会话）
+
+侧栏底部多一个 **会话** 入口（`sidebar.footer.action`）。点开是会话列表，按工作区
+分组，每行显示 `session-<uuid>`、最后活动时间、占用字节数：
+
+```text
+会话（删除 = 移到回收站）
+ws-a
+  session-94f60096-…   最后活动 2026/11/19 18:13:32 · 324 KB
+  session-9daf7f36-…   最后活动 2026/11/22 14:19:38 · 1.1 MB   [删除(禁用)]
+```
+
+删除语义：
+
+1. **移动而不是删除**。会话目录整段 `rename` 到
+   `<rootDir>/lifecycle-cache/trash/<时间戳>__<工作区>__session-<id>/`，
+   后悔时把目录搬回 `sessions/<工作区>/` 即可。
+2. **两道护栏**。UI 传 `currentSessionId` 时 Host 直接拒当前会话；
+   另外 `sessionDeleteMinIdleMs`（默认 120000）内有过写入的会话一律拒绝——
+   正在跑的会话本来就在写文件，不需要猜“它是不是活的”。文件被占用
+   （Windows rename 的 `EPERM`/`EBUSY`）同样拒绝。
+3. **删完立刻收尾**。目录搬走等于“会话被删除”，Host 当场调一次
+   `runtime.handleSessionsRemoved()`：释放租约 → 走统一闸门尝试释放引擎，
+   不用等 watcher 下一个轮询周期。
+4. **路径只认 uuid**。`session-<id>` 的 id 必须是 uuid 形状，目标目录必须真的
+   在 `sessions/` 根下，`../` 这类写法进不来。
+
+配置项：
+
+```yaml
+- id: lifecycle-cache-cleaner
+  name: 'dsh-lifecycle-cache-cleaner'
+  config:
+    sessionDeleteMinIdleMs: 120000   # 最近 2 分钟有写入就拒绝删除；0 = 关掉这条护栏
+```
+
+接口（同源、owner-only）：
+
+| 方法 | 路径 | 作用 |
+|---|---|---|
+| `GET` | `/lifecycle-cache/api/sessions` | 会话清单 + `minIdleMs`（不含绝对路径） |
+| `POST` | `/lifecycle-cache/api/sessions/delete` | `{ id, confirm: true, currentSessionId? }` |
 
 ## 跨平台
 
@@ -150,13 +195,14 @@ Windows/Linux 采样器目前只有单元测试覆盖，没有真机显存断言
 | 路径 | 职责 |
 |---|---|
 | `index.js` | 插件入口：`apply(ctx, config)`，注册工具、记忆注入、会话监听、UI 的 HTTP 面 |
-| `client.js` | Client 半边：插件页状态卡（`plugins.bundle.config`），只用 React 与主题变量 |
+| `client.js` | Client 半边：插件页状态卡 + 侧栏会话面板（React 与主题变量，无宿主 Client 包） |
 | `cordis.patch.yml` | 组合包 patch：插入一行插件条目 |
 | `locale/` `icon.svg` | 插件管理器里显示的标题、描述、图标 |
 | `lib/host/runtime.js` | 运行时：探测 → 闸门 → 释放，以及记忆文本与删除后处理 |
 | `lib/host/tools.js` | 两个模型的工具定义与文本渲染 |
 | `lib/host/session-watcher.js` | 会话目录监听（轮询，跨平台一致） |
-| `lib/host/web-api.js` | 插件页数据的 HTTP 面：认证 → 路由 → `runtime`（不做判定） |
+| `lib/host/web-api.js` | UI 的 HTTP 面：认证 → 路由 → `runtime` / `session-store`（不做判定） |
+| `lib/host/session-store.js` | 会话清单与「移到回收站」：uuid 收敛、路径包含、空闲窗口、占用检测 |
 | `adapters/engine-http.js` | 本地引擎探测（只读 GET）与 ollama 卸载 |
 | `cleaner.js` | 主循环：tick / rebuild / onCompacted / releaseCache |
 | `session-deleter.js` | 会话删除编排（`DELETE_STATE` 九态） |
@@ -173,13 +219,13 @@ Windows/Linux 采样器目前只有单元测试覆盖，没有真机显存断言
 ## 测试
 
 ```bash
-node --test               # 全部：149 项，147 pass / 2 skip
+node --test               # 全部：164 项，162 pass / 2 skip
 ```
 
 V1–V6 日志流水线，V7–V11 引擎释放与工作区记忆，S 系列压缩接缝，I 系列闸门不变量，
 X 系列跨平台采样/归一/重试，M 系列记忆归属与消重，P 系列组合包清单，
 H 系列宿主接入（工具、记忆注入、删除监听），U 系列 UI 的 HTTP 面（认证 / 投影 / 拒绝路径），
-C 系列 Client 半边（清单、注册、渲染一次）。
+C 系列 Client 半边（清单、注册、渲染一次），Z 系列会话清单与回收站，W 系列会话接口（确认 / 409 / 触发清理）。
 
 > 界面验收分两半：`node --test` 只证明接线与文案；卡片是不是真的长在插件页上、
 > 图标与中英文标题是否正常，必须在装好的页面里看（见 `docs/DECISIONS.md` D20）。

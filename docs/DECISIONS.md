@@ -338,6 +338,38 @@ GitHub 仓库名不改（本来就对）。
 - `node --test` 只能证明接线、投影与拒绝路径；卡片是不是真的长在插件页上、图标与中英文标题
   是否正常，必须在装好的页面里看。发布说明里不许拿 U/C 系列冒充界面验收。
 
+## D21. 自己实现会话删除：移动而不是删除（部分推翻 D19）
+
+**背景**：D19 写下“不接管删除”，前提是删除由会话管理器负责。实际使用里这个前提不成立：
+`dsh-session-manager` 一旦不在 profile 里，界面上就没有任何删除入口；而宿主本身没有删除 API
+（`@deepseek-ai/dsh-session` 无 remove/delete；ACP 的 `session_delete` 是另一套协议）。
+
+**决策**：
+
+1. **删除由本包提供，但仍然不接管“删除后如何收拾”**：目录搬走之后照旧走
+   `runtime.handleSessionsRemoved()` → 释放租约 → 统一闸门，和 watcher 发现目录消失是同一条路。
+2. **移动，而不是 `rm -rf`**。`session-store.trashSession()` 把整个会话目录 rename 到
+   `<rootDir>/lifecycle-cache/trash/<时间戳>__<工作区>__session-<id>/`。副作用可控、可原样搬回；
+   `dsh-session-manager` 是直接 rm，我们不做那个选择。
+3. **三道护栏**：
+   - `currentSessionId`（UI 传当前会话）命中即拒；
+   - `sessionDeleteMinIdleMs`（默认 120s）内有写入即拒——正在跑的会话本来就在写文件，
+     不去猜“它是不是活的”；
+   - `rename` 返回 `EPERM`/`EBUSY`/`EACCES` 即判 `busy`，不重试、不降级成 rm。
+4. **路径只认 uuid**。`session-<id>` 的 id 走 `^[0-9a-fA-F][0-9a-fA-F-]{7,63}$`，目标目录必须
+   真的在 `sessions/` 根下（`path.resolve` 后再做前缀比对），`../` 与符号链接都进不来。
+5. **UI 侧不判断**。浏览器只负责 `POST /lifecycle-cache/api/sessions/delete`；是否允许删、
+   删成没删成，全由 Host 返回（`409 + result.code`）。
+
+**代价与已知边界**：
+
+- 删除的是**文件**，不是宿主索引。宿主如果还有指向该会话的索引行，重启后可能报一次“找不到”，
+  与 `dsh-session-manager` 的 `rm` 行为一致——这是宿主没有删除 API 的必然结果。
+- “最近有写入”的窗口是启发式：刚写完但已经关闭的会话会被误判为忙，最多等一个窗口
+  （可把 `sessionDeleteMinIdleMs` 调成 0 关掉）。宁可误拒，不可误删。
+- 删除当前正在使用的会话会被拒（这本来也是我们不想支持的动作）；要删它请先切到别的会话。
+- 与 D19 的关系：**D19 的“不接管删除”从此只对 watcher 成立**；UI 入口归本包，链路不变。
+
 ## T11. 非 macOS 尚未做过真机显存断言
 
 采样器补齐后，Windows/Linux 的解析逻辑有单元测试覆盖，但**没有在真机上验证过“删除会话 -> 显存真的掉下来”**。V2/V2b 在非 macOS 上 skip，这是目前唯一跑过真实下降断言的平台。

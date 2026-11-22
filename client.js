@@ -1,16 +1,14 @@
 /**
  * dsh-lifecycle-cache-cleaner —— Client 半边。
  *
- * 只做一件小事：在插件页（Plugins → 本插件）画一行状态 + 一个「释放引擎」按钮。
+ * 两块 UI，共用同一个 Host HTTP 面：
+ *   1. 插件页状态卡（`plugins.bundle.config`）：引擎 / 闸门 / 记忆 + 释放按钮。
+ *   2. 侧栏「会话」面板（`sidebar.footer.action`）：列出会话、把选中的会话移到回收站。
  *
- * 两条硬约束：
- *   1. 不在浏览器里重算闸门。状态来自 `/lifecycle-cache/api/status`，就是
- *      Host `runtime.status()` 的原样投影；按钮也只是把 `confirm: true` 交给
- *      `runtime.clean()`，判定仍然只有 `lib/core/release-gate.js` 一份。
- *   2. 不 import 任何宿主 Client 包。React 走模块表，样式用 `--dsw-alias-*`
- *      主题变量自己写，slot 通过 `ctx.slots` 注入。
- *
- * 不提供删除会话入口：删除是宿主/会话管理器的事，本包只观察。
+ * 硬约束：
+ *   - 闸门与删除判定都不在浏览器里：状态来自 Host 投影，删除只是一个 POST，
+ *     Host 侧 `lib/host/web-api.js` → `session-store.js` 负责路径收敛与移动。
+ *   - 不 import 任何宿主 Client 包。React 走模块表，样式用 `--dsw-alias-*` 自己写。
  */
 window.__ModuleLoader__.load({
   id: 'dsh-lifecycle-cache-cleaner',
@@ -22,6 +20,9 @@ window.__ModuleLoader__.load({
     const NS = 'lifecycle-cache-cleaner';
     // 与 Host 侧 lib/host/web-api.js 的 ROUTE_BASE 必须一致。
     const API = '/lifecycle-cache/api';
+
+    /** 客户端 Context；只在 apply 里赋值，用于可选的会话列表刷新。 */
+    let clientCtx = null;
 
     const zh = {
       'card.title': '生命周期缓存',
@@ -52,6 +53,24 @@ window.__ModuleLoader__.load({
       'gate.unauthorized': '需要有效的 DSH 会话凭证。',
       'gate.forbidden': '需要 owner 权限。',
       'gate.not_found': '接口不存在（可能是 Host 侧未加载）。',
+      'panel.button': '会话',
+      'panel.title': '会话',
+      'panel.heading': '会话（删除 = 移到回收站）',
+      'panel.hint': '删除会把整个会话目录移到回收站，需要时可原样搬回；最近有写入的会话会被拒绝。',
+      'panel.loading': '读取会话列表…',
+      'panel.empty': '没有找到会话目录。',
+      'panel.error': '读取失败：{message}',
+      'panel.updated': '最后活动 {time}',
+      'panel.size': '{size}',
+      'panel.active': '最近有写入，暂不允许删除',
+      'panel.delete': '删除',
+      'panel.confirm': '确认删除',
+      'panel.cancel': '取消',
+      'panel.deleting': '删除中…',
+      'panel.trashed': '已移到回收站。',
+      'panel.close': '关闭',
+      'panel.refresh': '刷新',
+      'panel.unknown': '未知',
     };
 
     const en = {
@@ -83,6 +102,24 @@ window.__ModuleLoader__.load({
       'gate.unauthorized': 'A valid DSH session credential is required.',
       'gate.forbidden': 'Owner permission is required.',
       'gate.not_found': 'The endpoint is missing (the Host side may not be loaded).',
+      'panel.button': 'Sessions',
+      'panel.title': 'Sessions',
+      'panel.heading': 'Sessions (delete = move to trash)',
+      'panel.hint': 'Deleting moves the whole session folder to the trash so it can be moved back; sessions written recently are refused.',
+      'panel.loading': 'Loading sessions…',
+      'panel.empty': 'No session folders found.',
+      'panel.error': 'Read failed: {message}',
+      'panel.updated': 'Last activity {time}',
+      'panel.size': '{size}',
+      'panel.active': 'Written recently, not deletable yet',
+      'panel.delete': 'Delete',
+      'panel.confirm': 'Confirm delete',
+      'panel.cancel': 'Cancel',
+      'panel.deleting': 'Deleting…',
+      'panel.trashed': 'Moved to the trash.',
+      'panel.close': 'Close',
+      'panel.refresh': 'Refresh',
+      'panel.unknown': 'unknown',
     };
 
     const CSS = [
@@ -98,6 +135,36 @@ window.__ModuleLoader__.load({
       '.lc-btn:disabled{opacity:.5;cursor:not-allowed}',
       '.lc-primary{border-color:var(--dsw-alias-state-error-primary,#c0392b);color:var(--dsw-alias-state-error-primary,#c0392b)}',
       '.lc-hint{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#666)}',
+      // 侧栏入口
+      '.lc-nav{box-sizing:border-box;display:flex;align-items:center;gap:8px;width:100%;height:32px;padding:0 10px;',
+      'border:1px solid transparent;border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary,#111);',
+      'font-size:13px;text-align:left;cursor:pointer}',
+      '.lc-nav:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06))}',
+      '.lc-navKey{margin-left:auto;font-size:11px;color:var(--dsw-alias-label-tertiary,#666)}',
+      // 弹层：fixed 定位，脱离侧栏的 overflow
+      '.lc-scrim{position:fixed;inset:0;z-index:1100;background:rgba(0,0,0,.42);display:flex;',
+      'align-items:center;justify-content:center;padding:24px}',
+      '.lc-dialog{box-sizing:border-box;display:flex;flex-direction:column;width:min(640px,92vw);',
+      'max-height:min(560px,80vh);border:1px solid var(--dsw-alias-border-l2,#ddd);border-radius:10px;',
+      'background:var(--dsw-alias-bg-primary,#fff);box-shadow:0 12px 40px rgba(0,0,0,.32);overflow:hidden}',
+      '.lc-dialogHead{display:flex;align-items:center;gap:10px;padding:14px 16px;',
+      'border-bottom:1px solid var(--dsw-alias-border-l2,#ddd)}',
+      '.lc-dialogBody{flex:1 1 auto;min-height:0;overflow:auto;padding:8px 16px}',
+      '.lc-dialogFoot{display:flex;align-items:center;gap:8px;padding:12px 16px;',
+      'border-top:1px solid var(--dsw-alias-border-l2,#ddd)}',
+      '.lc-row{display:flex;align-items:center;gap:10px;padding:9px 0;',
+      'border-bottom:1px solid var(--dsw-alias-border-l2,#eee)}',
+      '.lc-row:last-child{border-bottom:none}',
+      '.lc-rowMain{flex:1 1 auto;min-width:0}',
+      '.lc-rowTitle{font-size:13px;color:var(--dsw-alias-label-primary,#111);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.lc-rowMeta{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#666)}',
+      '.lc-rowActions{display:flex;align-items:center;gap:6px}',
+      '.lc-danger{border-color:var(--dsw-alias-state-error-primary,#c0392b);color:var(--dsw-alias-state-error-primary,#c0392b)}',
+      '.lc-groupTitle{margin:10px 0 2px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;',
+      'color:var(--dsw-alias-label-tertiary,#888)}',
+      '.lc-status{margin:0;padding:8px 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#666)}',
+      '.lc-statusOk{color:var(--dsw-alias-state-success-primary,#1e8449)}',
+      '.lc-statusError{color:var(--dsw-alias-state-error-primary,#c0392b)}',
     ].join('');
 
     /** 只替换 `{name}`；locale 服务自身通常也会插值，这里兜底。 */
@@ -143,6 +210,23 @@ window.__ModuleLoader__.load({
       return error && error.message ? error.message : String(error);
     }
 
+    function formatBytes(bytes) {
+      const value = Number(bytes) || 0;
+      if (value < 1024) return `${value} B`;
+      if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+      return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function formatTime(value) {
+      const time = Number(value) || 0;
+      if (time <= 0) return '—';
+      try {
+        return new Date(time).toLocaleString();
+      } catch {
+        return String(time);
+      }
+    }
+
     /** 同源请求；非 2xx 或 `ok:false` 都抛错，交给 UI 显示。 */
     async function request(method, path, body) {
       const init = {
@@ -162,12 +246,14 @@ window.__ModuleLoader__.load({
         payload = null;
       }
       if (!response.ok || !payload || payload.ok !== true) {
-        const error = new Error((payload && payload.error) || `HTTP ${response.status}`);
-        error.code = (payload && payload.code) || `http_${response.status}`;
+        const error = new Error((payload && (payload.error || (payload.result && payload.result.reason))) || `HTTP ${response.status}`);
+        error.code = (payload && (payload.code || (payload.result && payload.result.code))) || `http_${response.status}`;
         throw error;
       }
       return payload.result;
     }
+
+    // ---------------------------------------------------------------- 状态卡
 
     function StatusCard(props) {
       const t = makeText(props);
@@ -312,13 +398,250 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // ------------------------------------------------------------ 会话面板
+
+    /**
+     * 侧栏入口 + 会话列表弹层。
+     *
+     * 删除是“移动”而不是删：Host 把目录 rename 到回收站目录，并立刻走一次
+     * 租约释放 + 闸门。最近有写入的会话在两侧都会显示为不可删（Host 也会拒）。
+     */
+    function SessionPanel(props) {
+      const t = makeText(props);
+      const [open, setOpen] = React.useState(false);
+      const [snapshot, setSnapshot] = React.useState({ phase: 'idle', sessions: [], minIdleMs: 0 });
+      const [pendingId, setPendingId] = React.useState(null);
+      const [busyId, setBusyId] = React.useState(null);
+      const [outcome, setOutcome] = React.useState(null);
+      const alive = React.useRef(true);
+
+      React.useEffect(() => {
+        alive.current = true;
+        return () => {
+          alive.current = false;
+        };
+      }, []);
+
+      const load = React.useCallback(async () => {
+        setSnapshot((prev) => ({ ...prev, phase: 'loading' }));
+        try {
+          const result = await request('GET', '/sessions');
+          if (!alive.current) return;
+          setSnapshot({
+            phase: 'ready',
+            sessions: Array.isArray(result?.sessions) ? result.sessions : [],
+            minIdleMs: Number(result?.minIdleMs) || 0,
+          });
+        } catch (error) {
+          if (alive.current) {
+            setSnapshot({ phase: 'error', sessions: [], minIdleMs: 0, message: messageOf(error) });
+          }
+        }
+      }, []);
+
+      React.useEffect(() => {
+        if (!open) return undefined;
+        void load();
+        const onKey = (event) => {
+          if (event.key === 'Escape') setOpen(false);
+        };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+      }, [open, load]);
+
+      const isActive = (session) => {
+        if (!snapshot.minIdleMs) return false;
+        const updated = Number(session?.updatedAt) || 0;
+        return updated > 0 && Date.now() - updated < snapshot.minIdleMs;
+      };
+
+      const remove = React.useCallback(
+        async (session) => {
+          setBusyId(session.id);
+          setOutcome(null);
+          try {
+            await request('POST', '/sessions/delete', { id: session.id, confirm: true });
+            if (alive.current) {
+              setOutcome({ ok: true, text: t('panel.trashed') });
+              setPendingId(null);
+            }
+            await load();
+            try {
+              clientCtx?.sessions?.refresh?.();
+            } catch {
+              /* 会话服务缺席时不影响删除结果 */
+            }
+          } catch (error) {
+            if (alive.current) setOutcome({ ok: false, text: messageOf(error) });
+          } finally {
+            if (alive.current) setBusyId(null);
+          }
+        },
+        [load, t],
+      );
+
+      const sessions = snapshot.sessions;
+      const groups = [];
+      for (const session of sessions) {
+        const key = session.workspaceKey ?? '';
+        let group = groups.find((entry) => entry.key === key);
+        if (!group) {
+          group = { key, items: [] };
+          groups.push(group);
+        }
+        group.items.push(session);
+      }
+
+      const dialog = !open
+        ? null
+        : h(
+            'div',
+            { className: 'lc-scrim', role: 'presentation' },
+            h(
+              'div',
+              {
+                className: 'lc-dialog',
+                role: 'dialog',
+                'aria-modal': 'true',
+                'aria-label': t('panel.heading'),
+                'data-lc-sessions': '1',
+              },
+              h(
+                'div',
+                { className: 'lc-dialogHead' },
+                h('span', { className: 'lc-title' }, t('panel.heading')),
+                h(
+                  'span',
+                  { className: 'lc-actions' },
+                  h(
+                    'button',
+                    { type: 'button', className: 'lc-btn', onClick: () => void load(), disabled: snapshot.phase === 'loading' },
+                    t('panel.refresh'),
+                  ),
+                  h('button', { type: 'button', className: 'lc-btn', onClick: () => setOpen(false) }, t('panel.close')),
+                ),
+              ),
+              h(
+                'div',
+                { className: 'lc-dialogBody' },
+                h('p', { className: 'lc-hint' }, t('panel.hint')),
+                outcome
+                  ? h(
+                      'p',
+                      { className: `lc-status ${outcome.ok ? 'lc-statusOk' : 'lc-statusError'}`, role: 'status' },
+                      outcome.text,
+                    )
+                  : null,
+                snapshot.phase === 'loading' ? h('p', { className: 'lc-status' }, t('panel.loading')) : null,
+                snapshot.phase === 'error'
+                  ? h('p', { className: 'lc-status lc-statusError' }, t('panel.error', { message: snapshot.message }))
+                  : null,
+                snapshot.phase === 'ready' && sessions.length === 0
+                  ? h('p', { className: 'lc-status' }, t('panel.empty'))
+                  : null,
+                groups.map((group) =>
+                  h(
+                    'div',
+                    { key: group.key },
+                    h('div', { className: 'lc-groupTitle' }, group.key || t('panel.unknown')),
+                    group.items.map((session) => {
+                      const active = isActive(session);
+                      const pending = pendingId === session.id;
+                      const busy = busyId === session.id;
+                      return h(
+                        'div',
+                        { key: session.id, className: 'lc-row' },
+                        h(
+                          'div',
+                          { className: 'lc-rowMain' },
+                          h('div', { className: 'lc-rowTitle' }, `session-${session.id}`),
+                          h(
+                            'div',
+                            { className: 'lc-rowMeta' },
+                            [
+                              t('panel.updated', { time: formatTime(session.updatedAt) }),
+                              t('panel.size', { size: formatBytes(session.bytes) }),
+                              active ? t('panel.active') : null,
+                            ]
+                              .filter(Boolean)
+                              .join(' · '),
+                          ),
+                        ),
+                        h(
+                          'div',
+                          { className: 'lc-rowActions' },
+                          pending
+                            ? h(
+                                'button',
+                                {
+                                  type: 'button',
+                                  className: 'lc-btn lc-danger',
+                                  disabled: busy,
+                                  onClick: () => void remove(session),
+                                  'data-lc-action': 'confirm-delete',
+                                },
+                                busy ? t('panel.deleting') : t('panel.confirm'),
+                              )
+                            : h(
+                                'button',
+                                {
+                                  type: 'button',
+                                  className: 'lc-btn lc-danger',
+                                  disabled: active || busy,
+                                  title: active ? t('panel.active') : t('panel.delete'),
+                                  onClick: () => {
+                                    setPendingId(session.id);
+                                    setOutcome(null);
+                                  },
+                                  'data-lc-action': 'delete',
+                                },
+                                t('panel.delete'),
+                              ),
+                          pending
+                            ? h(
+                                'button',
+                                { type: 'button', className: 'lc-btn', disabled: busy, onClick: () => setPendingId(null) },
+                                t('panel.cancel'),
+                              )
+                            : null,
+                        ),
+                      );
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          );
+
+      return h(
+        'div',
+        null,
+        h('style', null, CSS),
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'lc-nav',
+            onClick: () => setOpen(true),
+            title: t('panel.title'),
+            'data-lc-action': 'open-sessions',
+          },
+          h('span', null, t('panel.button')),
+        ),
+        dialog,
+      );
+    }
+
+    // ------------------------------------------------------------ 插件接线
+
     function apply(ctx) {
+      clientCtx = ctx;
       if (ctx && ctx.locale && typeof ctx.locale.register === 'function') {
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'lifecycle-cache: dictionaries');
       }
       if (!ctx || !ctx.slots || typeof ctx.slots.inject !== 'function') return;
-      // 注册在插件页的“本包配置”区（`plugins.bundle.config`，key 是包名）。
-      // 这个 slot 只以 `view: 'page'` 渲染，正好是状态行 + 按钮需要的位置。
+
+      // 插件页的“本包配置”区（key = 包名）。这个 slot 只以 `view: 'page'` 渲染。
       ctx.slots.inject('plugins.bundle.config', () =>
         ctx.slots.register(
           {
@@ -329,6 +652,19 @@ window.__ModuleLoader__.load({
             locale: NS,
           },
           StatusCard,
+        ),
+      );
+
+      // 侧栏页脚：会话列表入口。位置与设置项同区，宽度由宿主给（props.wide）。
+      ctx.slots.inject('sidebar.footer.action', () =>
+        ctx.slots.register(
+          {
+            name: 'sidebar.footer.action',
+            id: 'lifecycle-cache-sessions',
+            order: 40,
+            locale: NS,
+          },
+          SessionPanel,
         ),
       );
     }
