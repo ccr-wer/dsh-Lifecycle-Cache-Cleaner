@@ -1,10 +1,11 @@
-﻿import { test } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 
-import { listSessions, resolveSession, trashSession, isValidSessionId } from '../lib/host/session-store.js';
+import { listSessions, resolveSession, trashSession, isValidSessionId, readSessionTitle } from '../lib/host/session-store.js';
 
 // Z 系列：会话清单与“移到回收站”。
 // 判定都在文件系统层面，所以用真目录真文件，不用 mock。
@@ -108,4 +109,54 @@ test('Z8 sessions 根不存在时清单为空而不是抛错', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lc-sessions-empty-'));
   assert.deepEqual(listSessions(path.join(root, 'missing')), []);
   assert.equal(resolveSession(path.join(root, 'missing'), UUID_A), null);
+});
+
+// ---- 标题：阅读会话日志里的 session/title 事件 ----
+
+function writeTitleLog(dir, entries, { zstd = false } = {}) {
+  // makeRoot 的夹具里已经有 session.v4.jsonl.zstd（全零，没有标题事件），先清掉，
+  // 否则 findSessionLog 会优先挑到它。
+  for (const name of fs.readdirSync(dir)) {
+    if (/^session\..*\.jsonl(\.zstd)?$/.test(name)) fs.rmSync(path.join(dir, name), { force: true });
+  }
+  const body = entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n';
+  const file = path.join(dir, zstd ? 'session.v4.jsonl.zstd' : 'session.v4.jsonl');
+  fs.writeFileSync(file, zstd ? zlib.zstdCompressSync(Buffer.from(body, 'utf8')) : body);
+  return file;
+}
+
+test('Z9 从 JSONL 日志里读出标题（取 seq 最大的一个）', () => {
+  const { sessionsDir } = makeRoot();
+  const dir = path.join(sessionsDir, 'ws-a', `session-${UUID_A}`);
+  writeTitleLog(dir, [
+    { type: 'session', seq: 1 },
+    { type: 'session/title', seq: 15, data: { title: '旧标题', source: { kind: 'fallback' } } },
+    { type: 'session/title', seq: 17, data: { title: '新标题', source: { kind: 'provider' } } },
+  ]);
+
+  const listed = listSessions(sessionsDir).find((s) => s.id === UUID_A);
+  assert.equal(listed.title, '新标题');
+  assert.equal(readSessionTitle(dir), '新标题');
+  assert.equal(resolveSession(sessionsDir, UUID_A).title, '新标题');
+});
+
+test('Z10 从 zstd 拼接日志里也能读标题（按帧解）', () => {
+  const { sessionsDir } = makeRoot();
+  const dir = path.join(sessionsDir, 'ws-b', `session-${UUID_B}`);
+  writeTitleLog(dir, [{ type: 'session', seq: 1 }, { type: 'session/title', seq: 9, data: { title: '压缩标题' } }], { zstd: true });
+
+  assert.equal(readSessionTitle(dir), '压缩标题');
+  assert.equal(listSessions(sessionsDir).find((s) => s.id === UUID_B).title, '压缩标题');
+});
+
+test('Z11 没有标题事件 / 坏日志时返回空串，不抛', () => {
+  const { sessionsDir } = makeRoot();
+  const dir = path.join(sessionsDir, 'ws-a', `session-${UUID_A}`);
+  writeTitleLog(dir, [{ type: 'session', seq: 1 }, { type: 'session/title', seq: 2, data: { title: '' } }]);
+  assert.equal(readSessionTitle(dir), '');
+
+  const broken = path.join(sessionsDir, 'ws-b', `session-${UUID_B}`);
+  fs.writeFileSync(path.join(broken, 'session.v4.jsonl'), 'not json at all\n');
+  assert.equal(readSessionTitle(broken), '');
+  assert.equal(readSessionTitle(path.join(sessionsDir, 'ws-a', 'nope')), '');
 });

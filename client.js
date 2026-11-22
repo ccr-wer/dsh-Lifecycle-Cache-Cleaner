@@ -62,7 +62,7 @@ window.__ModuleLoader__.load({
       'panel.error': '读取失败：{message}',
       'panel.updated': '最后活动 {time}',
       'panel.size': '{size}',
-      'panel.active': '最近有写入，暂不允许删除',
+      'panel.active': '最近 {minutes} 分钟内被写过，暂不允许删除',
       'panel.delete': '删除',
       'panel.confirm': '确认删除',
       'panel.cancel': '取消',
@@ -131,7 +131,7 @@ window.__ModuleLoader__.load({
       'panel.error': 'Read failed: {message}',
       'panel.updated': 'Last activity {time}',
       'panel.size': '{size}',
-      'panel.active': 'Written recently, not deletable yet',
+      'panel.active': 'Written within the last {minutes} min, not deletable yet',
       'panel.delete': 'Delete',
       'panel.confirm': 'Confirm delete',
       'panel.cancel': 'Cancel',
@@ -603,20 +603,26 @@ window.__ModuleLoader__.load({
                       const active = isActive(session);
                       const pending = pendingId === session.id;
                       const busy = busyId === session.id;
+                      const shortId = `session-${String(session.id).slice(0, 8)}`;
+                      // 标题来自会话日志里的 `session/title`；没有标题就退回短 id，
+                      // 但列表里始终带上短 id，方便和别处（URL、日志）对得上。
+                      const label = session.title || shortId;
+                      const activeMinutes = Math.max(1, Math.round((snapshot.minIdleMs || 0) / 60000));
                       return h(
                         'div',
                         { key: session.id, className: 'lc-row' },
                         h(
                           'div',
                           { className: 'lc-rowMain' },
-                          h('div', { className: 'lc-rowTitle' }, `session-${session.id}`),
+                          h('div', { className: 'lc-rowTitle', title: shortId }, label),
                           h(
                             'div',
                             { className: 'lc-rowMeta' },
                             [
+                              shortId,
                               t('panel.updated', { time: formatTime(session.updatedAt) }),
                               t('panel.size', { size: formatBytes(session.bytes) }),
-                              active ? t('panel.active') : null,
+                              active ? t('panel.active', { minutes: activeMinutes }) : null,
                             ]
                               .filter(Boolean)
                               .join(' · '),

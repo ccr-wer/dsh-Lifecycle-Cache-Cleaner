@@ -106,14 +106,20 @@ patch（`cordis.patch.yml`）插入一行插件条目，入口 `index.js` 导出
 ## 会话面板（删除会话）
 
 侧栏底部多一个 **会话** 入口（`sidebar.footer.action`）。点开是会话列表，按工作区
-分组，每行显示 `session-<uuid>`、最后活动时间、占用字节数：
+分组，每行是**会话标题**（没有标题才退回短 id），下面一行是短 id、最后活动时间、占用字节数：
 
 ```text
 会话（删除 = 移到回收站）
-ws-a
-  session-94f60096-…   最后活动 2026/11/19 18:13:32 · 324 KB
-  session-9daf7f36-…   最后活动 2026/11/22 14:19:38 · 1.1 MB   [删除(禁用)]
+--C-Users-…-default-workspace--
+  测试称呼提问
+  session-37681fcd · 最后活动 2026/11/22 19:45:22 · 56.7 KB
+  根据交接文档完成任务
+  session-9daf7f36 · 最后活动 2026/11/22 19:44:55 · 2.3 MB · 最近 2 分钟内被写过，暂不允许删除   [删除(禁用)]
 ```
+
+标题从会话日志里的 `session/title` 事件读（zstd 帧拼接日志按帧解，取 `seq` 最大的那个；
+前段最多解 1MB、后段看最后 24 帧，结果按“文件 + 大小 + mtime”缓存）。读不到就显示
+`session-<id 前 8 位>`——列表里**永远带短 id**，方便和 URL、日志对得上。
 
 删除语义：
 
@@ -121,9 +127,10 @@ ws-a
    `<rootDir>/lifecycle-cache/trash/<时间戳>__<工作区>__session-<id>/`，
    后悔时把目录搬回 `sessions/<工作区>/` 即可。
 2. **两道护栏**。UI 传 `currentSessionId` 时 Host 直接拒当前会话；
-   另外 `sessionDeleteMinIdleMs`（默认 120000）内有过写入的会话一律拒绝——
+   另外 `sessionDeleteMinIdleMs`（默认 **120000 毫秒 = 2 分钟**）内有过写入的会话一律拒绝——
    正在跑的会话本来就在写文件，不需要猜“它是不是活的”。文件被占用
-   （Windows rename 的 `EPERM`/`EBUSY`）同样拒绝。
+   （Windows rename 的 `EPERM`/`EBUSY`）同样拒绝。行里会直接写出这个窗口，
+   例如“最近 2 分钟内被写过，暂不允许删除”。
 3. **删完立刻收尾**。目录搬走等于“会话被删除”，Host 当场调一次
    `runtime.handleSessionsRemoved()`：释放租约 → 走统一闸门尝试释放引擎，
    不用等 watcher 下一个轮询周期。
