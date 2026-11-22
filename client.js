@@ -176,6 +176,9 @@ window.__ModuleLoader__.load({
       '.lc-primary{border-color:var(--dsw-alias-state-error-primary,#c0392b);color:var(--dsw-alias-state-error-primary,#c0392b)}',
       '.lc-hint{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#666)}',
       // 侧栏入口
+      // 两个入口共处一行：各自 flex:1 平分宽度，避免两个 width:100% 的按钮叠在一起、
+      // 点击落到邻居身上（实际踩过：点「个性化」没反应）。
+      '.lc-navWrap{display:flex;flex:1 1 0;min-width:0}',
       '.lc-nav{box-sizing:border-box;display:flex;align-items:center;gap:8px;width:100%;height:32px;padding:0 10px;',
       'border:1px solid transparent;border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary,#111);',
       'font-size:13px;text-align:left;cursor:pointer}',
@@ -667,7 +670,7 @@ window.__ModuleLoader__.load({
 
       return h(
         'div',
-        null,
+        { className: 'lc-navWrap' },
         h('style', null, CSS),
         h(
           'button',
@@ -701,7 +704,12 @@ window.__ModuleLoader__.load({
      * 只有这个表单能写，保存后由 Host 原样注入 system prompt。
      */
     function ProfilePanel(props) {
-      const t = makeText(props);
+      // `makeText(props)` 每次渲染都是新函数；把它放进 useCallback 的依赖会让
+      // `load` 每次渲染都换新身份，而「打开时 load」的 effect 依赖 `load`——
+      // 结果就是无限 GET 循环（表现为按钮一直禁用、点了没反应）。
+      const textRef = React.useRef(null);
+      textRef.current = makeText(props);
+      const t = textRef.current;
       const [open, setOpen] = React.useState(false);
       const [draft, setDraft] = React.useState({ ...EMPTY_DRAFT });
       const [phase, setPhase] = React.useState('idle');
@@ -735,10 +743,10 @@ window.__ModuleLoader__.load({
         } catch (error) {
           if (alive.current) {
             setPhase('error');
-            setNotice({ ok: false, text: t('profile.loadError', { message: messageOf(error) }) });
+            setNotice({ ok: false, text: textRef.current('profile.loadError', { message: messageOf(error) }) });
           }
         }
-      }, [t]);
+      }, []);
 
       React.useEffect(() => {
         if (!open) return undefined;
@@ -757,14 +765,14 @@ window.__ModuleLoader__.load({
           const saved = await request('PUT', '/profile', draft);
           if (!alive.current) return;
           setSavedAt(Number(saved?.updatedAt) || Date.now());
-          setNotice({ ok: true, text: t('profile.saved') });
+          setNotice({ ok: true, text: textRef.current('profile.saved') });
           setPhase('ready');
         } catch (error) {
-          if (alive.current) setNotice({ ok: false, text: t('profile.error', { message: messageOf(error) }) });
+          if (alive.current) setNotice({ ok: false, text: textRef.current('profile.error', { message: messageOf(error) }) });
         } finally {
           if (alive.current) setBusy(false);
         }
-      }, [draft, t]);
+      }, [draft]);
 
       const edit = (key) => (event) => {
         const value = event && event.target ? event.target.value : '';
@@ -878,7 +886,7 @@ window.__ModuleLoader__.load({
 
       return h(
         'div',
-        null,
+        { className: 'lc-navWrap' },
         h('style', null, CSS),
         h(
           'button',
