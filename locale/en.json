@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Lifecycle cache cleaner",
-    "description": "Manages KV cache lifetime for local DSH agents: an overflow gate, work-log persistence, and one shared cleanup gate that never touches an engine it cannot prove is present. Engine release is not yet wired to the Host API, so cleanup stays skipped."
+    "description": "Manages KV cache lifetime for local DSH agents: an overflow gate, work-log persistence, one shared cleanup gate that never touches an engine it cannot prove is present, and shared/workspace memory injected into the prompt. Two tools report the probe verdict and release a local engine after confirmation."
   }
 }

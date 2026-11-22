@@ -36,9 +36,26 @@ patch（`cordis.patch.yml`）插入一行插件条目，入口 `index.js` 导出
 安装：**Plugins → Add plugin** 选本目录，或让插件管理器执行 `install_bundle`。
 从 npm 装同理——`npm install dsh-lifecycle-cache-cleaner` 后以目录方式添加。
 
-**当前状态**：插件能装、能在插件列表里看到，但 `apply()` 不注册任何宿主钩子。
-`adapters/dsh.js` 的宿主 API 尚未接入（DECISIONS 的 T10），所以清理一律 `skip_unknown`，
-不释放任何引擎——这是有意的，不猜接口。
+装上之后有三个可验证的能力：
+
+| 能力 | 触发方式 | 行为 |
+|---|---|---|
+| `lifecycle_cache_status` 工具 | 让模型调用，或直接说“看下缓存状态” | 只读：引擎探测结论、闸门判定、记忆用量 |
+| `lifecycle_cache_clean` 工具 | 模型调用，`confirm: true` 才真释放 | 必经统一闸门；探测不到就不动 |
+| 记忆注入 | 自动 | 把共享/工作区记忆写进 system prompt（预算 1KB / 2KB） |
+
+配置写在 `cordis.patch.yml` 的插件行里：
+
+```yaml
+- id: lifecycle-cache-cleaner
+  name: 'dsh-lifecycle-cache-cleaner'
+  config:
+    rootDir: 'C:\\Users\\you\\.dsh'   # 不填则取 DSH_HOME，再退到 ~/.dsh
+    ownership: adapter-exclusive        # 或 lease
+    engine:
+      kind: auto                        # auto | ollama | llamacpp | none
+      baseUrl: 'http://127.0.0.1:11434'
+```
 
 作为库使用：
 
@@ -98,9 +115,12 @@ Windows/Linux 采样器目前只有单元测试覆盖，没有真机显存断言
 
 | 路径 | 职责 |
 |---|---|
-| `index.js` | 插件入口：`apply(ctx, config)`；同时重新导出库接口 |
+| `index.js` | 插件入口：`apply(ctx, config)`，注册工具与记忆注入 |
 | `cordis.patch.yml` | 组合包 patch：插入一行插件条目 |
 | `locale/` `icon.svg` | 插件管理器里显示的标题、描述、图标 |
+| `lib/host/runtime.js` | 运行时：探测 → 闸门 → 释放，以及记忆文本 |
+| `lib/host/tools.js` | 两个模型的工具定义与文本渲染 |
+| `adapters/engine-http.js` | 本地引擎探测（只读 GET）与 ollama 卸载 |
 | `cleaner.js` | 主循环：tick / rebuild / onCompacted / releaseCache |
 | `session-deleter.js` | 会话删除编排（`DELETE_STATE` 九态） |
 | `lib/core/release-gate.js` | 统一清理闸门（探测 + 放行判定） |
@@ -119,7 +139,7 @@ Windows/Linux 采样器目前只有单元测试覆盖，没有真机显存断言
 node --test               # 全部：108 项，106 pass / 2 skip
 ```
 
-V1–V6 日志流水线，V7–V11 引擎释放与工作区记忆，S 系列压缩接缝，I 系列闸门不变量，X 系列跨平台采样/归一/重试，M 系列记忆归属与消重，P 系列组合包清单。
+V1–V6 日志流水线，V7–V11 引擎释放与工作区记忆，S 系列压缩接缝，I 系列闸门不变量，X 系列跨平台采样/归一/重试，M 系列记忆归属与消重，P 系列组合包清单，H 系列宿主接入。
 
 更多取舍见 [`docs/DECISIONS.md`](docs/DECISIONS.md)，压缩挂载点见 [`docs/whalebone.md`](docs/whalebone.md)。
 

@@ -3,20 +3,101 @@
  *
  * 宿主规范（`dsh-doc/references/host-plugin.md`）：
  * bundle 的 `package.json` 声明 `dsh.bundle.patch`，patch 里 insert 本包名，
- * 宿主据此加载本模块，期望导出 `apply(ctx, config)` 或一个 service class。
+ * 宿主据此加载本模块，期望导出 `apply(ctx, config)`。
  *
- * 当前边界（DECISIONS.md 的 T10）：
- * `adapters/dsh.js` 的宿主 API 尚未接入，`probeEngine()` 未实现，
- * 清理闸门因此恒定返回 `skip_unknown`。
- * 也就是说：装上本插件**不会清理任何东西**，只完成"可安装"这一步。
- * 在 `apply` 里注册钩子之前，必须先确认宿主真实的会话/压缩/引擎挂载点，
- * 不靠猜测填写。
+ * 实际能力（三个，全部可验证）：
+ *   1. `lifecycle_cache_status` 工具 —— 引擎探测 + 闸门结论 + 记忆用量，只读
+ *   2. `lifecycle_cache_clean` 工具 —— 经统一闸门释放引擎（需 confirm）
+ *   3. system prompt 记忆注入 —— 共享/工作区记忆进模型上下文
+ *
+ * 不 import 任何 `@deepseek-ai/*` 包：profile 里解析不到宿主包，
+ * 一切通过注入的 ctx 与 config 访问。
  */
-export function apply(_ctx, _config) {
-  console.info(
-    '[lifecycle-cache-cleaner] 插件已加载。引擎探测尚未接入宿主 API（T10），' +
-      '所有清理路径将返回 skip_unknown，不执行任何释放动作。',
-  );
+import os from 'node:os';
+import path from 'node:path';
+import { HostRuntime } from './lib/host/runtime.js';
+import { createStatusTool, createCleanTool } from './lib/host/tools.js';
+import { createEngineAdapter } from './adapters/engine-http.js';
+
+/** 只要 tools 服务；systemPrompt 是可选的，用 ctx.inject 单独接。 */
+export const inject = ['tools'];
+
+function resolveRootDir(config) {
+  return config.rootDir || process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+}
+
+export function apply(ctx, config = {}) {
+  const runtime = new HostRuntime({
+    rootDir: resolveRootDir(config),
+    workspaceId: config.workspaceId ?? process.cwd(),
+    adapter: createEngineAdapter(config),
+    ownership: config.ownership ?? 'adapter-exclusive',
+    config,
+  });
+
+  const registerTools = () => {
+    const disposers = [];
+    disposers.push(ctx.tools.register(createStatusTool(runtime)));
+    disposers.push(ctx.tools.register(createCleanTool(runtime)));
+    return () => {
+      for (const d of disposers.reverse()) {
+        try {
+          d?.();
+        } catch (err) {
+          runtime.diagnostics.push(`tool dispose: ${err?.message ?? err}`);
+        }
+      }
+    };
+  };
+
+  const wirePrompt = (systemPrompt) => {
+    try {
+      if (!systemPrompt?.variable || !systemPrompt?.section) {
+        runtime.diagnostics.push('systemPrompt 缺少 variable/section，跳过记忆注入');
+        return () => {};
+      }
+      const disposeVariable = systemPrompt.variable('lifecycle_memory', () => runtime.memoryText());
+      const disposeSection = systemPrompt.section({
+        name: 'plugin:lifecycle-memory',
+        order: 9200,
+        text: '## 记忆\n\n{{lifecycle_memory}}',
+      });
+      return () => {
+        try {
+          disposeSection?.();
+        } catch {}
+        try {
+          disposeVariable?.();
+        } catch {}
+      };
+    } catch (err) {
+      runtime.diagnostics.push(`记忆注入失败：${err?.message ?? err}`);
+      return () => {};
+    }
+  };
+
+  if (typeof ctx.effect === 'function') {
+    ctx.effect(() => {
+      const disposeTools = registerTools();
+      const disposePrompt =
+        typeof ctx.inject === 'function' ? () => {} : wirePrompt(ctx.systemPrompt);
+      return () => {
+        disposePrompt();
+        disposeTools();
+      };
+    });
+
+    // 可选服务：拿到 systemPrompt 才注入记忆，拿不到也不影响工具。
+    if (typeof ctx.inject === 'function') {
+      ctx.inject(['systemPrompt'], (sp) => {
+        const dispose = wirePrompt(sp);
+        ctx.effect(() => dispose);
+      });
+    }
+  } else {
+    registerTools();
+    if (typeof ctx.inject !== 'function') wirePrompt(ctx.systemPrompt);
+  }
 }
 
 /** 库接口保持不变：入口从 `cleaner.js` 迁到本文件后仍可从这里导入。 */

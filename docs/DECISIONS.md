@@ -267,6 +267,21 @@ GitHub 仓库名不改（本来就对）。
 
 ---
 
+## D18. 宿主接入：不用 import，只靠 ctx 与 config
+
+**背景**：把 `apply()` 留空等于装了个空壳。真实接入要回答两个问题：插件的代码凭什么能拿到宿主 API。
+
+**决策**：
+
+1. **不 import 任何 `@deepseek-ai/*`**。profile 的 `node_modules` 里只有 profile 安装的组合包，解析不到宿主包；对比 `dsh-session-manager@0.7.8`，它也只声明 `@deepseek-ai/cordis` 的 peer 并只 import node 内建。一切通过 `ctx.tools` / `ctx.systemPrompt` / config 访问。
+2. **工具用普通对象定义**。读 `dsh-tools` 源码确认：`register()` 只校验 `output.schema` 与 `output.render`，不要求经过 `defineTool()`，因此无需 import 宿主包就能定义工具。
+3. **`inject = ['tools']` 是硬依赖；`systemPrompt` 走 `ctx.inject()` 可选接入**。没有 prompt 服务的 profile 里插件仍能工作，只是不注入记忆。
+4. **引擎释放默认 `adapter-exclusive` + 必须 `confirm: true`**。探测只读（GET），释放只对 ollama（`keep_alive: 0`）成立；llama.cpp server 没有卸载接口，就直接抛错，不伪造“已释放”。
+
+**验证边界**：工具与闸门逻辑由 H1–H9 覆盖（假 ctx 捕获注册）；`systemPrompt.variable/section` 的真实签名、`ctx.inject` 的调度时机未经宿主实跑验证——这两处是装进 DSH 后才能确认的部分。
+
+---
+
 ## T11. 非 macOS 尚未做过真机显存断言
 
 采样器补齐后，Windows/Linux 的解析逻辑有单元测试覆盖，但**没有在真机上验证过“删除会话 -> 显存真的掉下来”**。V2/V2b 在非 macOS 上 skip，这是目前唯一跑过真实下降断言的平台。
