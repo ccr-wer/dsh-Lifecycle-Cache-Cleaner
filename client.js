@@ -622,12 +622,31 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         if (!open) return undefined;
         void load();
+        // 打开面板时顺手让宿主的会话/工作区列表重拉一次：
+        // 历史遗留（删掉了但客户端缓存里还在的“幽灵行”）会在这时候被清掉。
+        try {
+          refreshSessions();
+          refreshWorkspaces();
+        } catch {
+          /* 服务缺席不影响面板本身 */
+        }
         const onKey = (event) => {
           if (event.key === 'Escape') setOpen(false);
         };
         document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
       }, [open, load]);
+
+      /** 「刷新」= 面板自己的列表 + 侧栏列表，一起重拉。 */
+      const refreshAll = React.useCallback(async () => {
+        try {
+          refreshSessions();
+          refreshWorkspaces();
+        } catch {
+          /* 同上 */
+        }
+        await load();
+      }, [load]);
 
       const isActive = (session) => {
         if (!snapshot.minIdleMs) return false;
@@ -726,7 +745,7 @@ window.__ModuleLoader__.load({
                   { className: 'lc-actions' },
                   h(
                     'button',
-                    { type: 'button', className: 'lc-btn', onClick: () => void load(), disabled: snapshot.phase === 'loading' },
+                    { type: 'button', className: 'lc-btn', onClick: () => void refreshAll(), disabled: snapshot.phase === 'loading' },
                     t('panel.refresh'),
                   ),
                   h('button', { type: 'button', className: 'lc-btn', onClick: () => setOpen(false) }, t('panel.close')),
