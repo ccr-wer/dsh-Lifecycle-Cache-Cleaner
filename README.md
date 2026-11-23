@@ -332,7 +332,7 @@ Windows/Linux 采样器目前只有单元测试覆盖，没有真机显存断言
 ## 测试
 
 ```bash
-node --test               # 全部：212 项，210 pass / 2 skip
+node --test               # 全部：214 项，212 pass / 2 skip
 ```
 
 V1–V6 日志流水线，V7–V11 引擎释放与工作区记忆，S 系列压缩接缝，I 系列闸门不变量，

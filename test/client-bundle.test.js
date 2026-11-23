@@ -163,9 +163,16 @@ test('C4 apply 注册插件页配置区、会话面板与个性化面板，并�
   assert.ok(dict.zh['profile.save'], '缺保存文案');
   assert.equal(dict.zh['memory.button'], '记忆');
   assert.equal(dict.en['memory.button'], 'Memory');
-  assert.equal(dict.zh['memory.tab.shared'], '共享记忆');
+  // v2 面板：共享组 + 按工作区折叠 + 提议接受/拒绝（D26/D28）。
+  assert.ok(dict.zh['memory.sharedTitle'], '缺共享组标题');
+  assert.ok(dict.zh['memory.proposed'], '缺模型提议标题');
+  assert.ok(dict.zh['memory.accept'], '缺接受文案');
+  assert.ok(dict.zh['memory.reject'], '缺拒绝文案');
   assert.ok(dict.zh['memory.add'], '缺添加文案');
-  assert.ok(dict.zh['memory.docSave'], '缺文档保存文案');
+  // 文档编辑器已移除，这些 key 不许再回来（留着就是死代码）；tab.* 仍在提议卡片上使用。
+  for (const gone of ['memory.docSave', 'memory.docLabel', 'memory.docPlaceholder', 'memory.archive', 'memory.archived']) {
+    assert.equal(gone in dict.zh, false, `已移除的文案不该复活：${gone}`);
+  }
   for (const key of ['skip_absent', 'skip_unknown', 'skip_no_lease', 'skip_foreign', 'no_destroy']) {
     assert.ok(dict.zh[`gate.${key}`], `缺中文文案 gate.${key}`);
     assert.ok(dict.en[`gate.${key}`], `缺英文文案 gate.${key}`);
