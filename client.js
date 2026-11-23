@@ -21,8 +21,15 @@ window.__ModuleLoader__.load({
     // 与 Host 侧 lib/host/web-api.js 的 ROUTE_BASE 必须一致。
     const API = '/lifecycle-cache/api';
 
-    /** 客户端 Context；只在 apply 里赋值，用于可选的会话列表刷新。 */
-    let clientCtx = null;
+    /**
+     * 会话/工作区列表的刷新入口。
+     *
+     * 不能直接读 `ctx.sessions`：没在 inject 里声明过的服务，取值本身就抛
+     * `cannot get property "sessions" without inject`，包 try 也拦不住。
+     * 所以用 `ctx.inject([...], cb)` 拿 scoped ctx，拿不到就保持空函数（功能降级，不影响激活）。
+     */
+    let refreshSessions = () => {};
+    let refreshWorkspaces = () => {};
 
     const zh = {
       'card.title': '生命周期缓存',
@@ -634,14 +641,16 @@ window.__ModuleLoader__.load({
               setPendingId(null);
             }
             await load();
+            // 导航页列表是客户端缓存：先让宿主补发的 api-session/removed 生效，
+            // 再显式重拉一次，双保险（任一路径可用即可）。
             try {
-              clientCtx?.sessions?.refresh?.();
+              refreshSessions();
             } catch {
               /* 会话服务缺席时不影响删除结果 */
             }
             try {
-              // 导航页的工作区列表也要重读，否则删掉的那条还挂在侧栏上（D30）。
-              clientCtx?.workspaces?.refresh?.();
+              // 工作区列表也要重读，否则分组归属还是旧的（D30 / D31）。
+              refreshWorkspaces();
             } catch {
               /* 同上 */
             }
@@ -665,8 +674,8 @@ window.__ModuleLoader__.load({
           }
           await load();
           try {
-            clientCtx?.sessions?.refresh?.();
-            clientCtx?.workspaces?.refresh?.();
+            refreshSessions();
+            refreshWorkspaces();
           } catch {
             /* 刷新失败不影响清理结果 */
           }
@@ -1405,11 +1414,34 @@ window.__ModuleLoader__.load({
     // ------------------------------------------------------------ 插件接线
 
     function apply(ctx) {
-      clientCtx = ctx;
       if (ctx && ctx.locale && typeof ctx.locale.register === 'function') {
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'lifecycle-cache: dictionaries');
       }
-      if (!ctx || !ctx.slots || typeof ctx.slots.inject !== 'function') return;
+      if (!ctx) return;
+
+      // 会话/工作区刷新是可选能力：服务不在就降级成空函数，不能让插件激活失败。
+      if (typeof ctx.inject === 'function') {
+        ctx.inject(['sessions'], (scoped) => {
+          refreshSessions = () => {
+            try {
+              void scoped.sessions?.refresh?.();
+            } catch {
+              /* 刷新失败不影响删除结果 */
+            }
+          };
+        });
+        ctx.inject(['workspaces'], (scoped) => {
+          refreshWorkspaces = () => {
+            try {
+              void scoped.workspaces?.refresh?.();
+            } catch {
+              /* 同上 */
+            }
+          };
+        });
+      }
+
+      if (!ctx.slots || typeof ctx.slots.inject !== 'function') return;
 
       // 插件页的“本包配置”区（key = 包名）。这个 slot 只以 `view: 'page'` 渲染。
       ctx.slots.inject('plugins.bundle.config', () =>

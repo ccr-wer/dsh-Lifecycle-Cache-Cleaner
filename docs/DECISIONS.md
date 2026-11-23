@@ -606,6 +606,33 @@ GitHub 仓库名不改（本来就对）。
   但**交给 `detachSession` 的仍是宿主那份原值**。这条要有测试盯着（W10）。
 - 宿主内部方法名（`detachSession` / `sessionIds`）属于实现细节，宿主改了我们跟着改。
 
+## D31. 「未分组」残留：删除只摘了归属，没通知客户端重拉列表
+
+**背景**：D30 之后删除会把会话从工作区索引里摘掉，但用户看到它从「默认工作区」掉进
+「未分组」，而不是消失。查下来是两层数据源各管一半：
+
+| 层 | 来源 | D30 后 |
+|---|---|---|
+| 分组归属 | `storages/workspace.json` 的 `sessionIds` | 已摘；会话因此落进「未分组」 |
+| 会话行 | 客户端 `sessions.list()`（宿主 `sessionQuery.listSessions()` → `persistence.list()` 扫盘） | 没变；行还在 |
+
+并且**客户端列表是缓存**：只有收到 `api-session/removed` 才会少一行；而历史会话没有 live
+agent，宿主不会发这个事件（它只在 `session/disposed` 时发）。
+
+**决策**：
+
+1. **补发事件**：删除成功后由 Host 侧 `ctx.emit('api-session/removed', id)`。
+   该事件在 `api-remotes` 的转发白名单里，客户端会立刻移除那一行。
+2. **显式刷新客户端列表**：`client.js` 通过 `ctx.inject(['sessions'])` / `(['workspaces'])`
+   拿 scoped ctx，删除/清理后调 `refresh()`。**不能裸读 `ctx.sessions`**：未在 inject 里声明
+   的服务，取值本身抛 `cannot get property "sessions" without inject`，包 try 也拦不住——
+   这正是 D30 之后「刷新没生效」的真正原因（异常被 catch 吞掉）。
+   拿不到服务时降级成空函数，不影响插件激活。
+3. 两条路互为保险：事件即时，refresh 兜底（页面重拉时持久化层扫盘，已删目录自然不在列表里）。
+
+**代价**：`api-session/removed` 是宿主事件契约，payload 是裸 sessionId（不带 `session-` 前缀），
+宿主改签名我们要跟。存量残留（本机那条）刷新页面就会消失，不必重启。
+
 ## T11. 非 macOS 尚未做过真机显存断言
 
 采样器补齐后，Windows/Linux 的解析逻辑有单元测试覆盖，但**没有在真机上验证过“删除会话 -> 显存真的掉下来”**。V2/V2b 在非 macOS 上 skip，这是目前唯一跑过真实下降断言的平台。

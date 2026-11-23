@@ -48,6 +48,8 @@ function loadBundle() {
 function makeClientCtx() {
   const slots = [];
   const dictionaries = new Map();
+  const injected = [];
+  const refreshers = {};
   const ctx = {
     locale: {
       register(ns, dictionary) {
@@ -67,12 +69,26 @@ function makeClientCtx() {
         };
       },
     },
+    // 真实客户端 ctx 有 inject；用来确认我们只通过它拿 sessions / workspaces。
+    inject(names, callback) {
+      injected.push(names.join(','));
+      const scoped = {};
+      for (const name of names) {
+        scoped[name] = {
+          refresh: () => {
+            refreshers[name] = (refreshers[name] ?? 0) + 1;
+          },
+        };
+      }
+      callback(scoped);
+      return () => {};
+    },
     effect(fn) {
       const dispose = fn();
       return () => dispose?.();
     },
   };
-  return { ctx, slots, dictionaries };
+  return { ctx, slots, dictionaries, injected, refreshers };
 }
 
 /** 在 createElement 树上找满足条件的节点。 */
@@ -235,4 +251,24 @@ test('C10 记忆面板收起时只有一个入口按钮，不渲染列表或编�
   assert.equal(buttons[0].children[0].children[0], 'Memory');
   assert.equal(findAll(tree, (node) => node.props['data-lc-memory'] === '1').length, 0, '收起时不该有对话框');
   assert.equal(findAll(tree, (node) => node.props['data-lc-field']).length, 0, '收起时不该有编辑区');
+});
+
+test('C11 只通过 ctx.inject 拿 sessions / workspaces，不裸读 ctx 属性', () => {
+  const { mod } = loadBundle();
+  const { ctx, injected } = makeClientCtx();
+  mod.apply(ctx);
+
+  assert.ok(injected.includes('sessions'), '没有注入 sessions：删除后列表不会刷新');
+  assert.ok(injected.includes('workspaces'), '没有注入 workspaces：分组归属不会刷新');
+  // 裸读 `ctx.sessions` 在真实宿主会抛 cannot get property ... without inject。
+  // 只看代码行，注释里提到这个名字不算（否则会把说明文字误判成用法）。
+  const code = clientSource
+    .split('\n')
+    .filter((line) => {
+      const trimmed = line.trim();
+      return !trimmed.startsWith('//') && !trimmed.startsWith('*') && !trimmed.startsWith('/*');
+    })
+    .join('\n');
+  assert.equal(/ctx\.sessions/.test(code), false, 'client.js 不允许裸读 ctx.sessions');
+  assert.equal(/ctx\.workspaces/.test(code), false, 'client.js 不允许裸读 ctx.workspaces');
 });

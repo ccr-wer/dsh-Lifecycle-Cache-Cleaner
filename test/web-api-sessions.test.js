@@ -191,10 +191,11 @@ test('W6 没配置会话目录时回 503，不崩', async () => {
   assert.equal(list.json().code, 'sessions_unavailable');
 });
 
-test('W7 删除后把会话从宿主工作区索引里摘掉，并清投影缓存', async () => {
+test('W7 删除后把会话从宿主工作区索引里摘掉，并清投影缓存、通知客户端', async () => {
   const env = makeEnv();
   const { runtime } = fakeRuntime();
   const detached = [];
+  const notified = [];
   const cacheDir = path.join(env.root, 'storages', 'session_projcache', 'sessions');
   fs.mkdirSync(cacheDir, { recursive: true });
   const cacheFile = path.join(cacheDir, `session-${UUID}.json`);
@@ -211,6 +212,9 @@ test('W7 删除后把会话从宿主工作区索引里摘掉，并清投影缓�
       detachSession: async (id) => {
         detached.push(id);
       },
+      notifyRemoved: (id) => {
+        notified.push(id);
+      },
     },
   });
 
@@ -220,6 +224,7 @@ test('W7 删除后把会话从宿主工作区索引里摘掉，并清投影缓�
   );
   assert.equal(res.statusCode, 200);
   assert.deepEqual(detached, [UUID], '必须把 id 从工作区索引摘掉，否则导航页还显示');
+  assert.deepEqual(notified, [UUID], '必须通知客户端，否则列表里那行还在（只会掉进未分组）');
   assert.equal(fs.existsSync(cacheFile), false, '投影缓存要一起清掉');
 });
 

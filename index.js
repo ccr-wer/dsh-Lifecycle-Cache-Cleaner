@@ -238,6 +238,10 @@ export function apply(ctx, config = {}) {
                   if (hit !== undefined) await workspace.detachSession(hit);
                 }
               },
+              // 让客户端的会话列表立刻少掉这一行：删历史会话时宿主不会自己发这个事件。
+              notifyRemoved: (sessionId) => {
+                if (typeof ctx.emit === 'function') ctx.emit('api-session/removed', sessionId);
+              },
             }
           : null,
       });
