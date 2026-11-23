@@ -84,7 +84,11 @@ window.__ModuleLoader__.load({
       'profile.button': '个性化',
       'profile.title': '个性化（只由你编辑）',
       'profile.hint': '这些内容由你在界面里写，模型没有任何写入口；保存后会原样进入 system prompt。',
-      'profile.userName': '你希望它怎么称呼你',
+      'profile.groupIdentity': '称呼',
+      'profile.groupIdentityHint': '模型在每次对话里这样称呼你、这样自称。',
+      'profile.groupVoice': '说话方式',
+      'profile.groupVoiceHint': '风格、长期指令与人设都会拼进 system prompt。',
+      'profile.userName': '它怎么称呼你',
       'profile.assistantName': '它叫什么名字',
       'profile.style': '回复风格',
       'profile.instructions': '长期指令',
@@ -195,7 +199,11 @@ window.__ModuleLoader__.load({
       'profile.button': 'Personalize',
       'profile.title': 'Personalization (only you can edit)',
       'profile.hint': 'You write these here; the model has no way to write them. Saving puts them into the system prompt verbatim.',
-      'profile.userName': 'How it should address you',
+      'profile.groupIdentity': 'Addressing',
+      'profile.groupIdentityHint': 'How the model addresses you and names itself.',
+      'profile.groupVoice': 'Voice',
+      'profile.groupVoiceHint': 'Style, standing instructions, and persona all go into the system prompt.',
+      'profile.userName': 'How it addresses you',
       'profile.assistantName': 'Its name',
       'profile.style': 'Reply style',
       'profile.instructions': 'Standing instructions',
@@ -302,6 +310,15 @@ window.__ModuleLoader__.load({
       '.lc-statusError{color:var(--dsw-alias-state-error-primary,#c0392b)}',
       // 个性化表单
       '.lc-form{display:flex;flex-direction:column;gap:12px;padding:4px 0 8px}',
+      // 表单分组：称呼 / 说话方式。组之间用分隔线拉开层次，标题小一号。
+      '.lc-section{display:flex;flex-direction:column;gap:8px;padding:4px 0 6px}',
+      '.lc-section + .lc-section{margin-top:6px;padding-top:14px;',
+      'border-top:1px solid var(--dsw-alias-border-l2,#e6e6e6)}',
+      '.lc-sectionHead{display:flex;flex-direction:column;gap:2px}',
+      '.lc-sectionTitle{font-size:12px;font-weight:600;letter-spacing:.02em;',
+      'color:var(--dsw-alias-label-primary,#111)}',
+      // 宽的时候并排、窄的时候自动落回单列（auto-fit 不用写媒体查询）。
+      '.lc-row2{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}',
       '.lc-field{display:flex;flex-direction:column;gap:4px}',
       '.lc-label{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#555)}',
       '.lc-input,.lc-select,.lc-textarea{box-sizing:border-box;width:100%;padding:6px 8px;font:inherit;font-size:13px;',
@@ -323,7 +340,9 @@ window.__ModuleLoader__.load({
       '.lc-entryMeta{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#888)}',
       '.lc-tag{display:inline-block;margin-left:6px;padding:0 5px;border-radius:4px;font-size:10px;line-height:15px;',
       'border:1px solid var(--dsw-alias-border-l2,#ccc);color:var(--dsw-alias-label-tertiary,#777)}',
-      '.lc-add{display:flex;flex-direction:column;gap:6px;padding:8px 0 4px}',
+      '.lc-add{display:flex;align-items:flex-end;gap:8px;padding:6px 0 8px}',
+      '.lc-add .lc-textarea{flex:1 1 auto;min-height:44px}',
+      '.lc-add .lc-btn{flex:0 0 auto;white-space:nowrap}',
       // 按工作区分组的折叠列表
       '.lc-group{border:1px solid var(--dsw-alias-border-l2,#ddd);border-radius:8px;margin:6px 0;overflow:hidden}',
       '.lc-groupHead{box-sizing:border-box;display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;',
@@ -1018,44 +1037,69 @@ window.__ModuleLoader__.load({
                       notice.text,
                     )
                   : null,
+                // 分两组：称呼（两项并排）与说话方式（长文本各占整行）。
+                // 原来五个字段一锅端堆成一列，看不清谁跟谁是一类。
                 h(
-                  'div',
-                  { className: 'lc-form' },
-                  field('userName', t('profile.userName')),
-                  field('assistantName', t('profile.assistantName')),
-                  h(
-                    'label',
-                    { className: 'lc-field' },
-                    h('span', { className: 'lc-label' }, t('profile.style')),
-                    h(
-                      'select',
-                      { className: 'lc-select', value: draft.style, onChange: edit('style'), 'data-lc-field': 'style' },
-                      ['default', 'concise', 'detailed'].map((id) =>
-                        h('option', { key: id, value: id }, t(`profile.style.${id}`)),
-                      ),
-                    ),
-                  ),
-                  field('instructions', t('profile.instructions'), t('profile.instructionsHint'), 'textarea'),
-                  field('persona', t('profile.persona'), t('profile.personaHint'), 'textarea'),
+                  'section',
+                  { className: 'lc-section' },
                   h(
                     'div',
-                    { className: 'lc-formActions' },
-                    h(
-                      'button',
-                      {
-                        type: 'button',
-                        className: 'lc-btn lc-primary',
-                        onClick: () => void save(),
-                        disabled: busy || phase === 'loading',
-                        'data-lc-action': 'save-profile',
-                      },
-                      busy ? t('profile.saving') : t('profile.save'),
-                    ),
-                    savedAt
-                      ? h('span', { className: 'lc-formHint' }, t('profile.savedAt', { time: formatTime(savedAt) }))
-                      : null,
+                    { className: 'lc-sectionHead' },
+                    h('span', { className: 'lc-sectionTitle' }, t('profile.groupIdentity')),
+                    h('span', { className: 'lc-formHint' }, t('profile.groupIdentityHint')),
+                  ),
+                  h('div', { className: 'lc-row2' },
+                    field('userName', t('profile.userName')),
+                    field('assistantName', t('profile.assistantName')),
                   ),
                 ),
+                h(
+                  'section',
+                  { className: 'lc-section' },
+                  h(
+                    'div',
+                    { className: 'lc-sectionHead' },
+                    h('span', { className: 'lc-sectionTitle' }, t('profile.groupVoice')),
+                    h('span', { className: 'lc-formHint' }, t('profile.groupVoiceHint')),
+                  ),
+                  h(
+                    'div',
+                    { className: 'lc-form' },
+                    h(
+                      'label',
+                      { className: 'lc-field' },
+                      h('span', { className: 'lc-label' }, t('profile.style')),
+                      h(
+                        'select',
+                        { className: 'lc-select', value: draft.style, onChange: edit('style'), 'data-lc-field': 'style' },
+                        ['default', 'concise', 'detailed'].map((id) =>
+                          h('option', { key: id, value: id }, t(`profile.style.${id}`)),
+                        ),
+                      ),
+                    ),
+                    field('instructions', t('profile.instructions'), t('profile.instructionsHint'), 'textarea'),
+                    field('persona', t('profile.persona'), t('profile.personaHint'), 'textarea'),
+                  ),
+                ),
+              ),
+              // 保存按钮固定在底部，不再跟着字段一起滚。
+              h(
+                'div',
+                { className: 'lc-dialogFoot' },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'lc-btn lc-primary',
+                    onClick: () => void save(),
+                    disabled: busy || phase === 'loading',
+                    'data-lc-action': 'save-profile',
+                  },
+                  busy ? t('profile.saving') : t('profile.save'),
+                ),
+                savedAt
+                  ? h('span', { className: 'lc-formHint' }, t('profile.savedAt', { time: formatTime(savedAt) }))
+                  : null,
               ),
             ),
           );
