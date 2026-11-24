@@ -56,7 +56,7 @@ const fakeAdapter = (snapshot) => ({
 
 test('H0 workspaceRegistry 要单独注入：只在 web 回调里 ctx.get 会拿到 undefined', () => {
   const injected = [];
-  const registry = { list: () => [{ id: 'w1', path: 'D:\\Vision-Pilot', title: 'Vision-Pilot' }] };
+  const registry = { list: () => [{ id: 'w1', path: 'D:\\projects\\demo', title: 'Demo' }] };
   const ctx = {
     tools: { register: () => () => {} },
     effect(fn) {
