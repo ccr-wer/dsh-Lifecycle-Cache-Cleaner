@@ -141,7 +141,8 @@ Plugins → Add plugin → 选本目录
 ```
 
 - **工作区组自动出现**：来自宿主 `workspaceRegistry`，新建项目被 DSH 登记后就会多一组；
-  再并上 `typed.json` 里已出现过的工作区（历史数据不丢）。
+  再并上 `typed.json` 里已出现过的工作区（历史数据不丢）。面板开着时每 5 秒静默重拉一次，
+  新建工作区最多 5 秒后出现，不用关掉重开。
 - **组名**：优先用宿主登记的工作区标题，没有才用路径最后一段；重名补父目录
   （`default-workspace (one)`），悬停显示完整路径。
 - **只有条目，没有整段文档编辑器**：文档不参与注入，写进去模型也读不到（D28）。
@@ -275,7 +276,7 @@ Plugins → Add plugin → 选本目录
 ## 测试
 
 ```bash
-node --test               # 227 项，225 pass / 2 skip
+node --test               # 230 项，228 pass / 2 skip
 ```
 
 skip 的两项是 macOS-only 的真实下降断言（V2/V2b）。

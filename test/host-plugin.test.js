@@ -54,6 +54,38 @@ const fakeAdapter = (snapshot) => ({
   destroyEngine: async () => {},
 });
 
+test('H0 workspaceRegistry 要单独注入：只在 web 回调里 ctx.get 会拿到 undefined', () => {
+  const injected = [];
+  const registry = { list: () => [{ id: 'w1', path: 'D:\\Vision-Pilot', title: 'Vision-Pilot' }] };
+  const ctx = {
+    tools: { register: () => () => {} },
+    effect(fn) {
+      const dispose = fn();
+      return () => dispose?.();
+    },
+    get(name) {
+      // 关键：这里的 get 永远拿不到 workspaceRegistry（模拟“服务晚于 web 就绪”）。
+      if (name === 'systemPrompt') return { variable: () => () => {}, section: () => () => {} };
+      return undefined;
+    },
+    inject(names, cb) {
+      injected.push(names.join(','));
+      if (names.includes('systemPrompt')) cb({ variable: () => () => {}, section: () => () => {} });
+      if (names.includes('workspaceRegistry')) cb({ workspaceRegistry: registry });
+      if (names.includes('webServer')) {
+        cb({ webServer: { register: () => () => {} }, connection: {} });
+      }
+    },
+  };
+
+  apply(ctx, { rootDir: tmpRoot(), engine: { kind: 'none' } });
+
+  assert.ok(
+    injected.some((name) => name.includes('workspaceRegistry')),
+    '必须显式 inject workspaceRegistry，否则新建工作区永远不出现在记忆面板里',
+  );
+});
+
 test('H1 apply 注册两个工具并保持定义可注册', () => {
   const { ctx, tools } = makeCtx();
   apply(ctx, { rootDir: tmpRoot(), engine: { kind: 'none' } });

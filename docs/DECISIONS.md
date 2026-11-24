@@ -708,6 +708,34 @@ agent，宿主不会发这个事件（它只在 `session/disposed` 时发）。
 - 钩子只覆盖“成功压缩”；如果宿主某天改成成功也写 `error: null`，判据仍成立（falsy）。
 - `cleaner.js`（日志固化流水线）仍然没有接线，那是另一条产品线，不在本次范围。
 
+## D34. 新建的工作区不出现：`ctx.get()` 拿得太早，面板也不会自己重拉
+
+**现象**：新建一个工作区（Vision-Pilot）之后，侧栏有了，但记忆面板里仍然只有旧的那些组。
+
+**根因有两层**：
+
+1. **数据源拿得太早**。原实现是在 `ctx.inject(['webServer','connection'], …)` 的回调里
+   `const registry = ctx.get('workspaceRegistry')` 取一次。`workspaceRegistry` 是可选服务，
+   可能比 `webServer` 晚就绪——那一次 `get` 拿到 `undefined`，闭包里就永远是 `undefined`，
+   `listWorkspaces()` 恒返回空数组，面板只能显示 `typed.json` 里出现过的工作区。
+   这也让 `/sessions/repair` 一直 503、删除时摘不了工作区索引。
+2. **面板不重拉**。即使数据源对了，面板只在打开时 `load()` 一次；开着面板新建工作区不会自己刷新。
+
+**决策**：
+
+1. 单独 `ctx.inject(['workspaceRegistry'], …)` 存一份实时引用；每次调用都通过
+   `getWorkspaceRegistry()` 重新取（先看注入值，回退 `ctx.get`）。服务晚就绪也能接上。
+2. `workspaceHooks` 不再是一次性判断（`registry ? hooks : null`），改为始终传 hooks，
+   内部每次实时取 registry；**「不可用」与「空索引」要分开**：
+   `listIndex()` 返回 `null` 表示宿主没有工作区服务（`repair` 回 503），
+   返回 `[]` 表示真的一个工作区都没有（`repair` 正常 200）。
+3. **面板打开期间每 5 秒静默重拉一次** `/memory`（不动 `phase`，不闪“读取中”），
+   新建的工作区最多 5 秒后出现在列表里。
+4. registry 缺失时记一条诊断（只记一次），方便下次排查。
+
+**代价**：面板开着时多一个 5 秒轮询（同源 GET，代价很小）；`listIndex()` 现在有
+`Array | null` 两种“空”，调用方必须显式区分——这是有意的，避免把“没有服务”误当成“没有工作区”。
+
 ## T11. 非 macOS 尚未做过真机显存断言
 
 采样器补齐后，Windows/Linux 的解析逻辑有单元测试覆盖，但**没有在真机上验证过“删除会话 -> 显存真的掉下来”**。V2/V2b 在非 macOS 上 skip，这是目前唯一跑过真实下降断言的平台。

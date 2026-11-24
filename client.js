@@ -1196,8 +1196,12 @@ window.__ModuleLoader__.load({
         };
       }, []);
 
-      const load = React.useCallback(async () => {
-        setPhase('loading');
+      /**
+       * @param {{silent?: boolean}} [options] silent 时不动 phase，
+       *   用于面板打开期间的自动刷新（不闪 “读取中”）。
+       */
+      const load = React.useCallback(async (options = {}) => {
+        if (options.silent !== true) setPhase('loading');
         try {
           const result = await request('GET', '/memory');
           if (!alive.current) return;
@@ -1214,11 +1218,19 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         if (!open) return undefined;
         void load();
+        // 面板开着的时候新建了工作区，组不会自己冒出来——静默轮询一次即可补上。
+        // `/memory` 每次实时读宿主 registry，所以只要重拉就能看到新组。
+        const timer = setInterval(() => {
+          void load({ silent: true });
+        }, 5000);
         const onKey = (event) => {
           if (event.key === 'Escape') setOpen(false);
         };
         document.addEventListener('keydown', onKey);
-        return () => document.removeEventListener('keydown', onKey);
+        return () => {
+          clearInterval(timer);
+          document.removeEventListener('keydown', onKey);
+        };
       }, [open, load]);
 
       const act = React.useCallback(

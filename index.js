@@ -200,11 +200,42 @@ export function apply(ctx, config = {}) {
   // 没有 get()，也没有可选服务解析能力，此时不注册第二条 inject，
   // 免得既有测试的 inject 调用序列被改变。
   if (typeof ctx.inject === 'function' && typeof ctx.get === 'function') {
+    /**
+     * workspaceRegistry 是可选服务，而且可能晚于 webServer/connection 就绪。
+     * 只在 web 注入回调里 `ctx.get()` 一次会拿到 undefined，并且**永远**是 undefined——
+     * 表现就是：新建了工作区，记忆面板里却一直只有旧的那些组。
+     * 所以单独 inject 一份实时引用，回调触发时才赋值。
+     */
+    let workspaceRegistry = null;
+    if (typeof ctx.inject === 'function') {
+      try {
+        ctx.inject(['workspaceRegistry'], (registryCtx) => {
+          workspaceRegistry = registryCtx.workspaceRegistry ?? null;
+        });
+      } catch {
+        /* 宿主没装 workspace 服务：保持 null，功能降级 */
+      }
+    }
+    const getWorkspaceRegistry = () => {
+      if (workspaceRegistry) return workspaceRegistry;
+      try {
+        return ctx.get('workspaceRegistry') ?? null;
+      } catch {
+        return null;
+      }
+    };
+    let reportedMissingRegistry = false;
+
     ctx.inject(['webServer', 'connection'], (webCtx) => {
-      // 工作区列表来自宿主 registry（可选服务）。拿不到就只显示已有记忆里的工作区。
-      const registry = ctx.get('workspaceRegistry');
       const listWorkspaces = () => {
-        if (!registry || typeof registry.list !== 'function') return [];
+        const registry = getWorkspaceRegistry();
+        if (!registry || typeof registry.list !== 'function') {
+          if (!reportedMissingRegistry) {
+            reportedMissingRegistry = true;
+            runtime.diagnostics.push('workspaceRegistry: 不可用（记忆面板只显示已有记忆里的工作区）');
+          }
+          return [];
+        }
         try {
           return registry
             .list()
@@ -230,30 +261,39 @@ export function apply(ctx, config = {}) {
         listWorkspaces,
         rootDir: runtime.rootDir,
         // 删除会话后必须把宿主导航页的数据源也清掉，否则索引里还记着它（D30）。
-        workspaceHooks: registry
-          ? {
-              listIndex: () =>
-                registry.list().map((workspace) => ({
-                  path: workspace?.path ?? null,
-                  sessionIds: Array.isArray(workspace?.sessionIds) ? [...workspace.sessionIds] : [],
-                })),
-              detachSession: async (sessionId) => {
-                // 宿主 sessionIds 里存的是 `session-<uuid>`；我们手里可能是裸 uuid。
-                // 两边都归一化再比，真正 detach 时传宿主那份原值。
-                const normalize = (raw) => String(raw ?? '').replace(/^session-/, '');
-                const target = normalize(sessionId);
-                for (const workspace of registry.list()) {
-                  const ids = Array.isArray(workspace?.sessionIds) ? workspace.sessionIds : [];
-                  const hit = ids.find((raw) => normalize(raw) === target);
-                  if (hit !== undefined) await workspace.detachSession(hit);
-                }
-              },
-              // 让客户端的会话列表立刻少掉这一行：删历史会话时宿主不会自己发这个事件。
-              notifyRemoved: (sessionId) => {
-                if (typeof ctx.emit === 'function') ctx.emit('api-session/removed', sessionId);
-              },
+        // 每次调用都重新取 registry：服务晚就绪时也接得上。
+        workspaceHooks: {
+          listIndex: () => {
+            const registry = getWorkspaceRegistry();
+            if (!registry || typeof registry.list !== 'function') return null;
+            try {
+              return registry.list().map((workspace) => ({
+                path: workspace?.path ?? null,
+                sessionIds: Array.isArray(workspace?.sessionIds) ? [...workspace.sessionIds] : [],
+              }));
+            } catch (err) {
+              runtime.diagnostics.push(`workspaceRegistry.list: ${err?.message ?? err}`);
+              return null;
             }
-          : null,
+          },
+          detachSession: async (sessionId) => {
+            const registry = getWorkspaceRegistry();
+            if (!registry || typeof registry.list !== 'function') return;
+            // 宿主 sessionIds 里存的是 `session-<uuid>`；我们手里可能是裸 uuid。
+            // 两边都归一化再比，真正 detach 时传宿主那份原值。
+            const normalize = (raw) => String(raw ?? '').replace(/^session-/, '');
+            const target = normalize(sessionId);
+            for (const workspace of registry.list()) {
+              const ids = Array.isArray(workspace?.sessionIds) ? workspace.sessionIds : [];
+              const hit = ids.find((raw) => normalize(raw) === target);
+              if (hit !== undefined) await workspace.detachSession(hit);
+            }
+          },
+          // 让客户端的会话列表立刻少掉这一行：删历史会话时宿主不会自己发这个事件。
+          notifyRemoved: (sessionId) => {
+            if (typeof ctx.emit === 'function') ctx.emit('api-session/removed', sessionId);
+          },
+        },
       });
       ctx.effect(() => dispose);
     });

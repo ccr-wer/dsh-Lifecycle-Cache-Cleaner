@@ -269,6 +269,48 @@ test('W9 没有工作区钩子时 repair 回 503，列表照常返回空 orphans
   assert.equal(repaired.json().code, 'workspace_unavailable');
 });
 
+test('W11 工作区索引“不可用”与“空索引”要分开：不可用时 repair 回 503', async () => {
+  const env = makeEnv();
+  const { runtime } = fakeRuntime();
+  const route = captureRoute({
+    runtime,
+    connection: ownerConnection(),
+    sessionsDir: env.sessionsDir,
+    trashDir: env.trashDir,
+    // 钩子在，但宿主没给 workspace 服务：listIndex 明确返回 null。
+    workspaceHooks: {
+      listIndex: () => null,
+      detachSession: async () => {},
+    },
+  });
+
+  const listed = await call(route, makeReq());
+  assert.deepEqual(listed.json().result.orphans, [], '没有索引可比，不该编造失效记录');
+
+  const repaired = await call(route, makeReq({ method: 'POST', url: `${ROUTE_BASE}/sessions/repair`, body: '{}' }));
+  assert.equal(repaired.statusCode, 503);
+  assert.equal(repaired.json().code, 'workspace_unavailable');
+});
+
+test('W12 工作区索引为空数组（真的一个工作区都没有）时不算不可用', async () => {
+  const env = makeEnv();
+  const { runtime } = fakeRuntime();
+  const route = captureRoute({
+    runtime,
+    connection: ownerConnection(),
+    sessionsDir: env.sessionsDir,
+    trashDir: env.trashDir,
+    workspaceHooks: {
+      listIndex: () => [],
+      detachSession: async () => {},
+    },
+  });
+
+  const repaired = await call(route, makeReq({ method: 'POST', url: `${ROUTE_BASE}/sessions/repair`, body: '{}' }));
+  assert.equal(repaired.statusCode, 200, '空索引是合法的，不该回 503');
+  assert.deepEqual(repaired.json().result.detached, []);
+});
+
 test('W10 索引里的 id 带 session- 前缀：存在的不能误判，失效的按原样 detach', async () => {
   const env = makeEnv();
   const { runtime } = fakeRuntime();
