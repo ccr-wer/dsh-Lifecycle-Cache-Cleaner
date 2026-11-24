@@ -105,6 +105,17 @@ window.__ModuleLoader__.load({
       'profile.style.default': '默认',
       'profile.style.concise': '简洁',
       'profile.style.detailed': '详细',
+      // 清理结果提示（成功 / 没部署所以没清 / 释放失败）
+      'toast.released': '已释放本地模型的 KV 缓存。',
+      'toast.releasedBy': '已释放本地模型的 KV 缓存（{trigger}）。',
+      'toast.skipped': '本机没有探测到本地模型部署，这次没有清理任何东西。',
+      'toast.skippedForeign': '有引擎但它不属于本插件，按归属规则不清理。',
+      'toast.skippedNoLease': '有引擎但没有对应租约，无法证明归属，不清理。',
+      'toast.failed': '释放失败：{reason}',
+      'toast.dismiss': '知道了',
+      'toast.trigger.manual': '你点的释放',
+      'toast.trigger.tool': '模型调用释放',
+      'toast.trigger.session-deleted': '删除会话触发',
       'memory.button': '记忆',
       'memory.title': '记忆（用户可编辑）',
       'memory.hint': '共享记忆所有工作区都能读到；工作区记忆只属于当前工作区。保存后会进入 system prompt。',
@@ -213,6 +224,16 @@ window.__ModuleLoader__.load({
       'profile.style.default': 'Default',
       'profile.style.concise': 'Concise',
       'profile.style.detailed': 'Detailed',
+      'toast.released': 'Released the local model KV cache.',
+      'toast.releasedBy': 'Released the local model KV cache ({trigger}).',
+      'toast.skipped': 'No local model deployment found, so nothing was cleaned.',
+      'toast.skippedForeign': 'An engine exists but it is not ours, so it was left alone.',
+      'toast.skippedNoLease': 'An engine exists but no matching lease proves ownership, so it was left alone.',
+      'toast.failed': 'Release failed: {reason}',
+      'toast.dismiss': 'Got it',
+      'toast.trigger.manual': 'you asked',
+      'toast.trigger.tool': 'model call',
+      'toast.trigger.session-deleted': 'session deleted',
       'memory.button': 'Memory',
       'memory.title': 'Memory (you can edit)',
       'memory.hint': 'Shared memory is readable from every workspace; workspace memory belongs to this one. Saving puts it into the system prompt.',
@@ -344,6 +365,17 @@ window.__ModuleLoader__.load({
       '.lc-proposal{background:var(--dsw-alias-fill-l1,rgba(0,0,0,.03));border-radius:6px;padding:6px 8px;margin:4px 0}',
       '.lc-orphans{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;margin:6px 0;',
       'border:1px dashed var(--dsw-alias-state-warning-primary,#b7791f);border-radius:8px}',
+      // 清理结果提示：底部居中浮层，不占布局、不挡点击
+      '.lc-toastWrap{position:fixed;left:0;right:0;bottom:20px;z-index:1200;display:flex;',
+      'justify-content:center;pointer-events:none;padding:0 16px}',
+      '.lc-toast{pointer-events:auto;display:flex;align-items:center;gap:10px;box-sizing:border-box;',
+      'max-width:min(560px,92vw);padding:10px 12px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2,#ddd);',
+      'background:var(--dsw-alias-bg-layer-2,#1b1b1f);box-shadow:0 10px 30px rgba(0,0,0,.35)}',
+      '.lc-toastText{font-size:13px;line-height:18px;color:var(--dsw-alias-label-primary,#111)}',
+      '.lc-toastClose{flex:0 0 auto;white-space:nowrap}',
+      '.lc-toast-success{border-color:var(--dsw-alias-state-success-primary,#2f855a)}',
+      '.lc-toast-warn{border-color:var(--dsw-alias-state-warning-primary,#b7791f)}',
+      '.lc-toast-error{border-color:var(--dsw-alias-state-error-primary,#c0392b)}',
     ].join('');
 
     /** 只替换 `{name}`；locale 服务自身通常也会插值，这里兜底。 */
@@ -1460,6 +1492,95 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // ------------------------------------------------------------ 清理结果提示
+
+    /**
+     * 全局清理提示：挂在 `shell.overlay`（root scope 的 list slot），所以不管用户
+     * 停在哪一页，钩子触发的清理结果都能弹出来。
+     *
+     * 数据来源是 `GET /status` 的 `lastRelease.seq`：只有真正尝试过的清理才会让
+     * seq 递增。首轮只对齐 seq、不弹旧的，避免插件重载后补弹一条历史结果。
+     */
+    function ReleaseToast(props) {
+      const t = makeText(props);
+      const [toast, setToast] = React.useState(null);
+      const lastSeq = React.useRef(null);
+      const timer = React.useRef(null);
+      // t 每次渲染都是新函数，放进 deps 会把轮询反复重建；用 ref 取最新值。
+      const textRef = React.useRef(t);
+      textRef.current = t;
+
+      React.useEffect(() => {
+        let alive = true;
+        const clearTimer = () => {
+          if (timer.current) {
+            clearTimeout(timer.current);
+            timer.current = null;
+          }
+        };
+        const show = (next) => {
+          clearTimer();
+          setToast(next);
+          timer.current = setTimeout(() => {
+            if (alive) setToast(null);
+            timer.current = null;
+          }, 6000);
+        };
+        const describe = (release) => {
+          const tr = textRef.current;
+          const trigger = release.trigger ? tr(`toast.trigger.${release.trigger}`) : '';
+          if (release.released) {
+            return { tone: 'success', text: trigger ? tr('toast.releasedBy', { trigger }) : tr('toast.released') };
+          }
+          if (release.code === 'skip_foreign') return { tone: 'warn', text: tr('toast.skippedForeign') };
+          if (release.code === 'skip_no_lease') return { tone: 'warn', text: tr('toast.skippedNoLease') };
+          if (release.code === 'skip_absent' || release.code === 'skip_unknown' || release.code === 'no_destroy') {
+            return { tone: 'warn', text: tr('toast.skipped') };
+          }
+          return { tone: 'error', text: tr('toast.failed', { reason: release.reason || release.code || '?' }) };
+        };
+        const poll = async () => {
+          try {
+            const status = await request('GET', '/status');
+            const release = status?.lastRelease;
+            if (!alive || !release || typeof release.seq !== 'number') return;
+            if (lastSeq.current === null) {
+              lastSeq.current = release.seq;
+              return;
+            }
+            if (release.seq === lastSeq.current) return;
+            lastSeq.current = release.seq;
+            show(describe(release));
+          } catch {
+            /* 宿主没接上就安静地不提示，不打扰用户 */
+          }
+        };
+        void poll();
+        const id = setInterval(poll, 5000);
+        return () => {
+          alive = false;
+          clearInterval(id);
+          clearTimer();
+        };
+      }, []);
+
+      if (!toast) return null;
+      return h(
+        'div',
+        { className: 'lc-toastWrap', 'data-lc-toast': toast.tone },
+        h(
+          'div',
+          { className: `lc-toast lc-toast-${toast.tone}`, role: 'status', 'aria-live': 'polite' },
+          h('span', { className: 'lc-toastText' }, toast.text),
+          h(
+            'button',
+            { type: 'button', className: 'lc-btn lc-toastClose', onClick: () => setToast(null) },
+            textRef.current('toast.dismiss'),
+          ),
+        ),
+      );
+    }
+
     // ------------------------------------------------------------ 插件接线
 
     function apply(ctx) {
@@ -1491,6 +1612,20 @@ window.__ModuleLoader__.load({
       }
 
       if (!ctx.slots || typeof ctx.slots.inject !== 'function') return;
+
+      // 全局浮层：钩子触发的清理结果弹一条提示（成功 / 没部署没清 / 释放失败）。
+      // `shell.overlay` 是 root scope 的 list slot，不阻塞页面交互，也不依赖用户停在哪一页。
+      ctx.slots.inject('shell.overlay', () =>
+        ctx.slots.register(
+          {
+            name: 'shell.overlay',
+            id: 'lifecycle-cache-toast',
+            order: 60,
+            locale: NS,
+          },
+          ReleaseToast,
+        ),
+      );
 
       // 插件页的“本包配置”区（key = 包名）。这个 slot 只以 `view: 'page'` 渲染。
       ctx.slots.inject('plugins.bundle.config', () =>

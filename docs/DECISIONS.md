@@ -633,6 +633,37 @@ agent，宿主不会发这个事件（它只在 `session/disposed` 时发）。
 **代价**：`api-session/removed` 是宿主事件契约，payload 是裸 sessionId（不带 `session-` 前缀），
 宿主改签名我们要跟。存量残留（本机那条）刷新页面就会消失，不必重启。
 
+## D32. 清理结果要有回声：成功和“没部署所以没清”都弹一条
+
+**背景**：钩子触发的清理发生在后台——删完会话、模型调完工具，界面上什么都没有。
+用户不知道缓存到底清没清；更糟的是，卖点本来就是“**没部署就不清**”，
+可这条最值得炫耀的克制，用户完全看不见，反而像是功能没生效。
+
+**决策**：
+
+1. **Host 记一条 `lastRelease`**：`{ seq, at, trigger, released, code, probeState, reason }`。
+   - `trigger` 说明是谁触发的（`manual` / `tool` / `session-deleted`），提示里直接写出来；
+   - **成功、按闸门拒清、释放失败都记**；只有 `confirm: false` 的预览不记——
+     否则用户打开面板就会被“没有清理”刷一遍，提示贬值。
+2. **`/status` 投影 `lastRelease`**，不带任何路径与内部字段（沿用 U10 的白名单风格）。
+3. **Client 挂在 `shell.overlay`**（root scope 的 list slot，不阻塞页面交互），
+   每 5 秒轮询 `/status`，只认 `seq` 递增，首轮只对齐不补弹历史（插件重载后不会补弹旧结果）。
+4. **文案按结局分支**：成功 / 没部署（`skip_absent`、`skip_unknown`、`no_destroy`）/
+   不是自己的引擎（`skip_foreign`）/ 没有租约（`skip_no_lease`）/ 失败（带原因）。
+   三种视觉调性：成功绿、克制黄、失败红。
+5. 6 秒自动消失 + 「知道了」手动关。
+
+**为什么不复用宿主的 toast slot**：`workspace.toast` 是 keyed slot，`kind` 是宿主固定的
+业务枚举，第三方加不进新 kind。`shell.overlay` 才是给第三方留的“自己的浮层座位”。
+
+**代价与已知边界**：
+
+- 轮询是 5 秒一次的同源 `GET /status`；不想轮询的话可以改成事件推送，但那要宿主开放转发白名单。
+- 提示只覆盖“清理”这一个事件；记忆提议、失效记录清理仍然在面板里就地反馈。
+- 目前**上下文压缩**触发的清理还没接线（`cleaner.js` 在包里但 `index.js` 未实例化），
+  所以 `trigger` 现在只会出现 `manual` / `tool` / `session-deleted`。
+  接上压缩钩子后无需改 UI——加一个 `trigger: 'compact'` 的文案即可。
+
 ## T11. 非 macOS 尚未做过真机显存断言
 
 采样器补齐后，Windows/Linux 的解析逻辑有单元测试覆盖，但**没有在真机上验证过“删除会话 -> 显存真的掉下来”**。V2/V2b 在非 macOS 上 skip，这是目前唯一跑过真实下降断言的平台。

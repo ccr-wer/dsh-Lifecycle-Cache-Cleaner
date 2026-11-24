@@ -173,7 +173,8 @@ test('U6 POST /clean 把 confirm 原样交给 runtime.clean', async () => {
   const bare = await call(routes[0], makeReq({ method: 'POST', url: `${ROUTE_BASE}/clean` }));
   assert.equal(bare.statusCode, 200);
 
-  assert.deepEqual(calls.clean, [{ confirm: true }, { confirm: false }]);
+  // trigger 让 UI 说明“是谁触发的清理”，不影响是否为一次真正的尝试。
+  assert.deepEqual(calls.clean, [{ confirm: true, trigger: 'manual' }, { confirm: false, trigger: 'manual' }]);
 });
 
 test('U7 闸门拒绝时 UI 也能读到原因（clean 结果原样返回）', async () => {
@@ -238,6 +239,7 @@ test('U10 publicStatus 只留 UI 需要的字段', () => {
   assert.deepEqual(Object.keys(projected).sort(), [
     'engine',
     'gate',
+    'lastRelease',
     'memory',
     'recentDeletions',
     'sessionWatcher',
@@ -246,6 +248,8 @@ test('U10 publicStatus 只留 UI 需要的字段', () => {
   assert.equal(projected.recentDeletions[0].sessions, 1);
   assert.equal('diagnostics' in projected, false);
   assert.equal('rootDir' in projected, false);
+  // 提示靠 lastRelease 的 seq 变化触发：没有就返回 null，不要伪造一条。
+  assert.equal(projected.lastRelease, null);
 });
 
 test('U11 接真实 HostRuntime：absent 引擎时 status 的闸门为拒绝且按钮不会放行', async () => {

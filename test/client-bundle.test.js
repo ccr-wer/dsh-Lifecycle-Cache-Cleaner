@@ -133,6 +133,7 @@ test('C4 apply 注册插件页配置区、会话面板与个性化面板，并�
     'lifecycle-cache-memory',
     'lifecycle-cache-profile',
     'lifecycle-cache-sessions',
+    'lifecycle-cache-toast',
   ]);
 
   const card = slots.find((slot) => slot.options.id === 'lifecycle-cache-config');
@@ -140,6 +141,11 @@ test('C4 apply 注册插件页配置区、会话面板与个性化面板，并�
   assert.equal(card.options.key, pkg.name);
   assert.equal(card.options.locale, 'lifecycle-cache-cleaner');
   assert.equal(typeof card.component, 'function');
+
+  // 清理结果提示挂在全局浮层，用户在哪个页面都能收到。
+  const toast = slots.find((slot) => slot.options.id === 'lifecycle-cache-toast');
+  assert.equal(toast.options.name, 'shell.overlay');
+  assert.equal(typeof toast.component, 'function');
 
   for (const id of ['lifecycle-cache-sessions', 'lifecycle-cache-profile', 'lifecycle-cache-memory']) {
     const panel = slots.find((slot) => slot.options.id === id);
@@ -173,6 +179,10 @@ test('C4 apply 注册插件页配置区、会话面板与个性化面板，并�
   for (const gone of ['memory.docSave', 'memory.docLabel', 'memory.docPlaceholder', 'memory.archive', 'memory.archived']) {
     assert.equal(gone in dict.zh, false, `已移除的文案不该复活：${gone}`);
   }
+  // 清理提示的两种结局都要有文案：成功、以及“没部署所以没清”。
+  assert.ok(dict.zh['toast.released'], '缺清理成功文案');
+  assert.ok(dict.zh['toast.skipped'], '缺“没有本地部署”文案');
+  assert.ok(dict.zh['toast.failed'], '缺释放失败文案');
   for (const key of ['skip_absent', 'skip_unknown', 'skip_no_lease', 'skip_foreign', 'no_destroy']) {
     assert.ok(dict.zh[`gate.${key}`], `缺中文文案 gate.${key}`);
     assert.ok(dict.en[`gate.${key}`], `缺英文文案 gate.${key}`);
