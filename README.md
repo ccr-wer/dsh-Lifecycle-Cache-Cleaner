@@ -39,6 +39,7 @@ Plugins → Add plugin → 选本目录
 | `lifecycle_cache_clean` | 模型调用 | 经闸门释放引擎，`confirm: true` 才动手 |
 | `lifecycle_memory_propose` | 模型调用 | 只进「待确认」队列，你接受才写进记忆 |
 | 会话删除监听 | 自动 | 会话目录消失 → 释放租约 → 过闸门 |
+| 上下文压缩钩子 | 自动 | `compaction/end` 且压缩成功 → 过闸门清一次（失败不清） |
 | 清理结果提示 | 自动（全局浮层） | 释放成功弹一条；没探测到本地部署时也弹一条「这次没有清理」 |
 | 记忆注入 | 自动 | 共享层进全局 prompt，工作区层按会话 cwd 注入 |
 
@@ -73,7 +74,7 @@ Plugins → Add plugin → 选本目录
 
 | 情形 | 提示 |
 |---|---|
-| 真的释放了 | 「已释放本地模型的 KV 缓存（会话删除触发）」 |
+| 真的释放了 | 「已释放本地模型的 KV 缓存（会话删除触发 / 上下文压缩触发 / 你点的释放 / 模型调用释放）」 |
 | 本机没部署引擎 | 「本机没有探测到本地模型部署，这次没有清理任何东西」（闸门拒绝，绝非乱删） |
 | 有引擎但不属于本插件 | 「有引擎但它不归本插件，按归属规则不清理」 |
 | 有引擎但没有租约 | 「有引擎但没有对应租约，无法证明归属，不清理」 |
@@ -180,10 +181,22 @@ Plugins → Add plugin → 选本目录
       kind: auto                       # auto | ollama | llamacpp | none
       baseUrl: 'http://127.0.0.1:11434'
     releaseOnDelete: true              # 删除会话后是否经闸门释放引擎
+    releaseOnCompact: true             # 上下文压缩成功后是否经闸门清理
+    compactDebounceMs: 1500            # 连续压缩的合并窗口
     watchIntervalMs: 5000              # 会话目录扫描间隔
     watchSessions: true                # false 则完全不开监听
     sessionDeleteMinIdleMs: 120000     # 最近 2 分钟有写入就拒绝删除；0 = 关掉
 ```
+
+**压缩钩子挂在 `compaction/end`**（不是解析 checkpoint 消息）：
+
+| 事件 | data | 处理 |
+|---|---|---|
+| `compaction/end`（成功） | `{ compactionId, turn, sourceCommandId? }` | 过闸门清一次 |
+| `compaction/end`（失败） | 同上 + `error` | **不清**——压缩失败上下文没变，清了只会让下一次重新算 |
+| 其它事件 | — | 忽略 |
+
+1.5 秒内的多次压缩收尾会合并成一次，避免连清。
 
 **宿主没有「会话已删除」事件**：删除是 UI/其它插件做的文件级操作。所以删除链路靠轮询
 `sessions/<工作区>/session-<uuid>/` 实现：目录消失 → 释放租约 → 过闸门。
@@ -245,6 +258,7 @@ Plugins → Add plugin → 选本目录
 | `lib/host/web-api.js` | UI 的 HTTP 面：认证 → 路由（不做判定） |
 | `lib/host/session-store.js` | 会话清单与「移到回收站」：uuid 收敛、空闲窗口、占用检测、标题读取 |
 | `lib/host/session-watcher.js` | 会话目录监听（轮询，跨平台一致） |
+| `lib/host/compaction-hook.js` | 上下文压缩钩子：`compaction/end` 成功才清，失败忽略 |
 | `lib/host/profile-store.js` | 用户设定：校验、原子写、渲染 prompt 片段 |
 | `lib/host/proposal-store.js` | 模型提议队列：去重、上限、接受/拒绝 |
 | `lib/core/memory-store.js` | 记忆条目：归属裁决 / 消重 / 升级 / 注入预算 |
@@ -259,14 +273,15 @@ Plugins → Add plugin → 选本目录
 ## 测试
 
 ```bash
-node --test               # 220 项，218 pass / 2 skip
+node --test               # 227 项，225 pass / 2 skip
 ```
 
 skip 的两项是 macOS-only 的真实下降断言（V2/V2b）。
 
 覆盖：V 系列日志流水线与引擎释放，S 压缩接缝，I 闸门不变量，X 跨平台采样/归一/重试，
 M/N 记忆归属与消重，H 宿主接入（工具、注入、删除监听），U/W/Z 会话接口与回收站，
-R/F 用户设定，Y/J 记忆面板与提议队列，K 清理提示依据（成功 / 没部署 / 预览不记录 / seq 递增），C Client 半边。
+R/F 用户设定，Y/J 记忆面板与提议队列，K 清理提示依据（成功 / 没部署 / 预览不记录 / seq 递增），
+L 压缩钩子（成功才清 / 失败不清 / 合并窗口 / 卸载），C Client 半边。
 
 > 界面验收分两半：`node --test` 只证明接线与文案；卡片是否真的长在页面上，
 > 必须在装好的界面里看。

@@ -19,6 +19,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { HostRuntime } from './lib/host/runtime.js';
+import { installCompactionHook } from './lib/host/compaction-hook.js';
 import { createStatusTool, createCleanTool, createProposeMemoryTool } from './lib/host/tools.js';
 import { SessionWatcher } from './lib/host/session-watcher.js';
 import { registerWebApi } from './lib/host/web-api.js';
@@ -97,8 +98,17 @@ export function apply(ctx, config = {}) {
     return () => watcher.stop();
   };
 
+  /**
+   * 上下文压缩之后也清一次：压缩换掉了整段上下文，旧 KV cache 不再有复用价值。
+   * 失败的压缩不清（上下文没变）。合并窗口见 compaction-hook.js。
+   */
+  const startCompactionHook = () => {
+    if (config.releaseOnCompact === false) return () => {};
+    return installCompactionHook(ctx, runtime, { debounceMs: config.compactDebounceMs ?? undefined });
+  };
+
   const boot = () => {
-    const disposers = [registerTools(), startWatcher()];
+    const disposers = [registerTools(), startWatcher(), startCompactionHook()];
     return () => {
       for (const dispose of disposers.reverse()) {
         try {

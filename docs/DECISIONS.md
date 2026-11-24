@@ -664,6 +664,45 @@ agent，宿主不会发这个事件（它只在 `session/disposed` 时发）。
   所以 `trigger` 现在只会出现 `manual` / `tool` / `session-deleted`。
   接上压缩钩子后无需改 UI——加一个 `trigger: 'compact'` 的文案即可。
 
+## D33. 压缩钩子挂在 `compaction/end`，并且只认成功
+
+**背景**：卖点之一是“上下文压缩后清 KV 缓存”，但 `cleaner.js` 那套日志流水线
+从来没有被 `index.js` 实例化过——`releaseOnCompact` 一直是死配置。D32 加提示时
+`trigger` 只可能出现 `manual` / `tool` / `session-deleted`。
+
+**挂载点选择**：DSH 的 compaction 没有“压缩完成”的全局事件，只有：
+
+| 事件 | 何时 | data |
+|---|---|---|
+| `compaction/start` | 开始 | `{ compactionId, turn, sourceCommandId? }` |
+| `compaction/summary` | 摘要写入 | `{ compactionId, ... }` |
+| `compaction/end` | 成功**或**失败关闭 | 成功：`{ compactionId, turn }`；失败：多一个 `error` |
+| `user/message`（source.kind=`compact-checkpoint`） | 成功后才写 | checkpoint 消息 |
+
+选 `compaction/end` 而不是解析 `user/message` 的 source：
+
+1. 一次事件就够，不用扫 surface 消息；
+2. **失败也会发 `compaction/end`（带 `error`），正好用来区分“要不要清”**——
+   压缩失败意味着上下文没变，清了只会让下一次请求重新算一遍，纯亏；
+3. `compaction/end` 的 data 形状稳定，不依赖消息内容。
+
+**决策**：
+
+1. 新模块 `lib/host/compaction-hook.js`：监听 `ctx.on('session/event', …)`（`{ global: true }`），
+   只处理 `compaction/end` 且 `data.error` 不存在的情况，调
+   `runtime.clean({ confirm: true, trigger: 'compact' })`。
+2. **1.5 秒合并窗口**（`compactDebounceMs`）：一次手动压缩可能连续收尾多个 span，
+   或者用户连着压两次，没必要每次都走一遍探测 + 闸门。
+3. 配置开关 `releaseOnCompact`（默认 `true`），关掉就完全不监听。
+4. 卸载时摘监听 + 清未执行的定时器；`clean` 抛错只进 `diagnostics`，不外抛。
+5. UI 无需改动：D32 的提示按 `trigger` 取文案，加一句 `toast.trigger.compact` 即可。
+
+**代价与已知边界**：
+
+- 依赖 `compaction/end` 这个事件契约；宿主换实现要跟着改（失败判据是 `data.error`）。
+- 钩子只覆盖“成功压缩”；如果宿主某天改成成功也写 `error: null`，判据仍成立（falsy）。
+- `cleaner.js`（日志固化流水线）仍然没有接线，那是另一条产品线，不在本次范围。
+
 ## T11. 非 macOS 尚未做过真机显存断言
 
 采样器补齐后，Windows/Linux 的解析逻辑有单元测试覆盖，但**没有在真机上验证过“删除会话 -> 显存真的掉下来”**。V2/V2b 在非 macOS 上 skip，这是目前唯一跑过真实下降断言的平台。
