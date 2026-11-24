@@ -691,8 +691,13 @@ agent，宿主不会发这个事件（它只在 `session/disposed` 时发）。
 1. 新模块 `lib/host/compaction-hook.js`：监听 `ctx.on('session/event', …)`（`{ global: true }`），
    只处理 `compaction/end` 且 `data.error` 不存在的情况，调
    `runtime.clean({ confirm: true, trigger: 'compact' })`。
-2. **1.5 秒合并窗口**（`compactDebounceMs`）：一次手动压缩可能连续收尾多个 span，
-   或者用户连着压两次，没必要每次都走一遍探测 + 闸门。
+2. **1.5 秒合并窗口**（`compactDebounceMs`）。注意：**一次压缩事务只发一个
+   `compaction/end`**，所以合并不是为了“一次压缩内部连发多次”。真实场景是多来源在
+   极短时间内接连落地：多个会话各自压缩、手动压完不够小又自动压一次、自动/手动交替。
+   清理目标是同一个全局引擎（不是每个会话一个），这一串里清一次就够，其余都是
+   白跑一遍探测 + 闸门。
+   - 手动压缩 = `compactNow(agent, signal, sourceCommandId)`（可低于阈值）；
+   - 自动压缩 = `compactIfNeeded(agent, trigger, signal)`（压力/溢出触发）。
 3. 配置开关 `releaseOnCompact`（默认 `true`），关掉就完全不监听。
 4. 卸载时摘监听 + 清未执行的定时器；`clean` 抛错只进 `diagnostics`，不外抛。
 5. UI 无需改动：D32 的提示按 `trigger` 取文案，加一句 `toast.trigger.compact` 即可。
