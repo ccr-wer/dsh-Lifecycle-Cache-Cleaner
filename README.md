@@ -101,6 +101,10 @@ Plugins → Add plugin → 选本目录
 **标题**从会话日志的 `session/title` 事件读（拼接 zstd 帧按帧解，取 `seq` 最大的那个）；
 读不到就显示短 id。列表里永远带短 id，方便和 URL、日志对得上。
 
+**目录名有兩種**：本机新建是 `session-<uuid>`，**从 App 消息历史导入的会话是裸 `<uuid>`**。
+两种都认——只认前者会把整批导入的会话当成“磁盘上没有”，在面板里看不见，
+还会被误报成「失效记录」。
+
 **删除是移动，不是抹掉**：
 
 | 步骤 | 做什么 |
@@ -284,7 +288,7 @@ Plugins → Add plugin → 选本目录
 ## 测试
 
 ```bash
-node --test               # 237 项，235 pass / 2 skip
+node --test               # 243 项，241 pass / 2 skip
 ```
 
 skip 的两项是 macOS-only 的真实下降断言（V2/V2b）。

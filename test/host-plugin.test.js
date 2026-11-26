@@ -265,7 +265,9 @@ test('H13 删除会话后：释放租约并按闸门释放引擎', async () => {
   });
 
   const entry = await runtime.handleSessionsRemoved(['ws/session-xyz']);
-  assert.deepEqual(released, [['session-xyz', 'session_deleted']]);
+  // 租约按**裸会话 id** 登记，所以这里必须剥掉目录名的 `session-` 前缀，
+  // 否则 release 用错 key，真正的租约永远释放不掉。
+  assert.deepEqual(released, [['xyz', 'session_deleted']]);
   assert.equal(entry.released, true);
   assert.equal(entry.code, 'released');
   assert.equal(destroyed, 1);

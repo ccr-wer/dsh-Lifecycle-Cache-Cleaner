@@ -160,3 +160,40 @@ test('Z11 没有标题事件 / 坏日志时返回空串，不抛', () => {
   assert.equal(readSessionTitle(broken), '');
   assert.equal(readSessionTitle(path.join(sessionsDir, 'ws-a', 'nope')), '');
 });
+
+test('Z12 App 历史导入的会话（目录名不带 session- 前缀）也算正常会话', () => {
+  const { sessionsDir } = makeRoot();
+  // 导入器写的是裸 uuid 目录；以前只认 `session-` 前缀，整批会被当成“磁盘上没有”。
+  const imported = '00bf8edc-cf82-4685-af5b-80f1fcc2cf1a';
+  const dir = path.join(sessionsDir, 'ws-a', imported);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'session.v4.jsonl.zstd'), Buffer.alloc(1024));
+  const past = new Date(Date.now() - 60 * 60 * 1000);
+  fs.utimesSync(path.join(dir, 'session.v4.jsonl.zstd'), past, past);
+
+  const ids = listSessions(sessionsDir).map((s) => s.id);
+  assert.ok(ids.includes(imported), '导入的会话必须出现在清单里');
+
+  const resolved = resolveSession(sessionsDir, imported);
+  assert.ok(resolved, '必须能按 id 找到导入的会话目录');
+  assert.equal(resolved.workspaceKey, 'ws-a');
+  assert.equal(resolved.dir, path.resolve(dir));
+});
+
+test('Z13 导入的会话也能删进回收站（用真实目录名，不假设前缀）', async () => {
+  const { sessionsDir, trashDir } = makeRoot();
+  const imported = '00bf8edc-cf82-4685-af5b-80f1fcc2cf1a';
+  const dir = path.join(sessionsDir, 'ws-a', imported);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'session.v4.jsonl.zstd'), Buffer.alloc(512));
+  const past = new Date(Date.now() - 60 * 60 * 1000);
+  fs.utimesSync(path.join(dir, 'session.v4.jsonl.zstd'), past, past);
+
+  const result = await trashSession({ sessionsDir, trashDir, id: imported, minIdleMs: 0 });
+  assert.equal(result.moved, true);
+  assert.equal(result.code, 'trashed');
+  assert.equal(fs.existsSync(dir), false, '原目录应已移走');
+  const trashed = fs.readdirSync(trashDir);
+  assert.equal(trashed.length, 1);
+  assert.ok(trashed[0].includes(imported), '回收站目录名要带上会话 id');
+});
