@@ -32,6 +32,23 @@ function resolveRootDir(config) {
   return config.rootDir || process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
 }
 
+/**
+ * 从一条用户消息里取出纯文本（content 可能是字符串，也可能是内容块数组）。
+ * @param {any} message
+ * @returns {string}
+ */
+function textOfMessage(message) {
+  const content = message?.content;
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((block) => (typeof block === 'string' ? block : block?.text ?? ''))
+      .filter(Boolean)
+      .join(' ');
+  }
+  return '';
+}
+
 export function apply(ctx, config = {}) {
   const sessionsDir = config.sessionsDir || path.join(resolveRootDir(config), 'sessions');
   const runtime = new HostRuntime({
@@ -171,6 +188,20 @@ export function apply(ctx, config = {}) {
       agentMemoryFibers.set(agent.id, fiber);
     } catch (err) {
       runtime.diagnostics.push(`agent memory section: ${err?.message ?? err}`);
+    }
+
+    // 注入发生在 systemPrompt 组装期，那里拿不到当前请求的消息，
+    // 所以在这里先记下“该工作区最近一条用户消息”，供注入时做相关度排序。
+    if (typeof agent.ctx.on === 'function') {
+      try {
+        agent.ctx.on('session/event', (session, event) => {
+          if (!event || event.type !== 'user/message') return;
+          const text = textOfMessage(event.data);
+          if (text) runtime.rememberHint(workspaceId, text);
+        });
+      } catch (err) {
+        runtime.diagnostics.push(`agent hint listener: ${err?.message ?? err}`);
+      }
     }
   };
 

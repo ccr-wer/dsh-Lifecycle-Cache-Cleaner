@@ -138,6 +138,9 @@ window.__ModuleLoader__.load({
       'memory.conflict': '与另一条冲突',
       'memory.updated': '更新于 {time}',
       'memory.budget': '注入预算：共享 {shared}B / 工作区 {workspace}B',
+      'memory.injection': '上次注入：共享 {shared}/{sharedTotal} 条 · 工作区 {workspace}/{workspaceTotal} 条',
+      'memory.injectionDropped': '有 {n} 条因预算被挤掉',
+      'memory.injectionRanked': '已按当前问题排序',
       'memory.workspace': '工作区：{key}',
       'memory.sharedTitle': '共享记忆（所有工作区共享）',
       'memory.proposed': '模型建议写入（等你确认）',
@@ -257,6 +260,9 @@ window.__ModuleLoader__.load({
       'memory.conflict': 'Conflicts with another entry',
       'memory.updated': 'Updated {time}',
       'memory.budget': 'Prompt budget: shared {shared}B / workspace {workspace}B',
+      'memory.injection': 'Last injection: shared {shared}/{sharedTotal} · workspace {workspace}/{workspaceTotal}',
+      'memory.injectionDropped': '{n} entries dropped for budget',
+      'memory.injectionRanked': 'ranked by the current question',
       'memory.workspace': 'Workspace: {key}',
       'memory.sharedTitle': 'Shared memory (every workspace)',
       'memory.proposed': 'Proposed by the model (waiting for you)',
@@ -1485,6 +1491,29 @@ window.__ModuleLoader__.load({
                 h('p', { className: 'lc-hint' }, t('memory.hint')),
                 data
                   ? h('p', { className: 'lc-formHint' }, t('memory.budget', { shared: data.budget?.sharedBytes ?? 0, workspace: data.budget?.workspaceBytes ?? 0 }))
+                  : null,
+                // 上一次真实注入的情况：被预算挤掉几条，让“记了但没生效”可见。
+                data?.injection
+                  ? h(
+                      'p',
+                      { className: 'lc-formHint', 'data-lc-injection': '1' },
+                      t('memory.injection', {
+                        shared: data.injection.shared?.injected ?? 0,
+                        sharedTotal: data.injection.shared?.total ?? 0,
+                        workspace: data.injection.workspace?.injected ?? 0,
+                        workspaceTotal: data.injection.workspace?.total ?? 0,
+                      }),
+                      (data.injection.shared?.dropped ?? 0) + (data.injection.workspace?.dropped ?? 0) > 0
+                        ? h(
+                            'span',
+                            { className: 'lc-badge lc-badgeWarn', style: { marginLeft: '8px' } },
+                            t('memory.injectionDropped', {
+                              n: (data.injection.shared?.dropped ?? 0) + (data.injection.workspace?.dropped ?? 0),
+                            }),
+                          )
+                        : null,
+                      data.injection.workspace?.ranked ? h('span', { className: 'lc-formHint' }, ' · ' + t('memory.injectionRanked')) : null,
+                    )
                   : null,
                 notice ? h('p', { className: `lc-status ${notice.ok ? 'lc-statusOk' : 'lc-statusError'}`, role: 'status' }, notice.text) : null,
                 phase === 'loading' ? h('p', { className: 'lc-status' }, t('panel.loading')) : null,
